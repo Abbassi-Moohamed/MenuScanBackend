@@ -16,7 +16,7 @@ Coffee (1) ──── (N) ItemCategory (1) ──── (N) Item
 
 ## Requirements
 
-- Node.js ≥ 20.19 (built/tested on Node 24)
+- Node.js 24 (pinned in `package.json` `engines`; built/tested on Node 24.11.1)
 - A MongoDB server (local or Atlas). Anything on `mongodb://`/`mongodb+srv://` works — the
   connection is fully driven by `DATABASE_URL`.
 
@@ -85,6 +85,20 @@ cp .env.example .env   # then edit values (see below)
 
 > `cors` options: `"*"` is only honored in `development`/`test`; the app refuses to boot with
 > `NODE_ENV=production` and a wildcard CORS origin. Production requires explicit origins.
+
+### Deploying (Render / Node hosts)
+
+- The build needs the devDependencies (they contain TypeScript itself and `@types/node`).
+  Render and similar hosts set `NODE_ENV=production` during builds, which makes `npm install`
+  skip devDependencies. The included `.npmrc` (`include=dev`) overrides that, so the default
+  command **`npm install && npm run build`** works as-is. `npm start` runs `node dist/server.js`.
+- Node is pinned to `24.x` in `engines`; Render resolves it from `package.json` and does not
+  need the version set manually.
+- Set these in the host's environment (never in git): `DATABASE_URL` (must include the
+  database name), `ADMIN_SECRET` (≥ 16 chars — required in production), `APP_ADMIN_PIN`,
+  `FRONTEND_URL`, optional `CORS_ORIGINS`.
+- If the host has no health-check config yet, point it at `/health` (liveness) or
+  `/health/ready` (includes a MongoDB readiness check).
 
 ### Database
 
