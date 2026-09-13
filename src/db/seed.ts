@@ -6,8 +6,12 @@ import { connectDatabase, disconnectDatabase } from "./index.js";
 import { CoffeeModel } from "../models/coffee.model.js";
 import { ItemCategoryModel } from "../models/item-category.model.js";
 import { ItemModel } from "../models/item.model.js";
+import { hashPin } from "../auth/pin.js";
 import { menuSeed } from "./seed-data.js";
 import { logger } from "../utils/logger.js";
+
+/** Default coffee admin PIN used by the seed and by coffee creation. */
+const DEFAULT_ADMIN_PIN = "0000";
 
 /**
  * Destructive developer seed: wipes coffees, categories and items, then
@@ -24,11 +28,15 @@ export async function seedDatabase(): Promise<{ coffees: number; categories: num
   let categories = 0;
   let items = 0;
 
+  // Every seeded coffee uses the default admin PIN 0000, stored hashed.
+  const defaultAdminPinHash = await hashPin(DEFAULT_ADMIN_PIN);
+
   for (const coffeeSeed of menuSeed) {
     const coffee = await CoffeeModel.create({
       name: coffeeSeed.name,
       slug: coffeeSeed.slug,
       logo: coffeeSeed.logo,
+      adminPinHash: defaultAdminPinHash,
     });
 
     for (const categorySeed of coffeeSeed.categories) {

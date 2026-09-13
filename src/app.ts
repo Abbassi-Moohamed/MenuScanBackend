@@ -9,6 +9,7 @@ import { errorHandler } from "./middlewares/error.middleware.js";
 import { notFoundHandler } from "./middlewares/not-found.middleware.js";
 import { healthRouter } from "./routes/health.routes.js";
 import { apiRouter } from "./routes/index.js";
+import { rootRouter } from "./routes/root.routes.js";
 import { logger } from "./utils/logger.js";
 
 /**
@@ -31,6 +32,10 @@ export function createApp(): express.Express {
   app.use(express.json({ limit: "10kb" }));
 
   // Structured request logging with per-request ids.
+  //
+  // Explicit req/res serializers: pino's default request serializer copies raw
+  // `req.headers` into the log line, which would write `Authorization: Bearer …`
+  // tokens (and cookies) to the logs. We only keep method/url/status.
   app.use(
     pinoHttp({
       logger,
@@ -41,8 +46,19 @@ export function createApp(): express.Express {
         res.setHeader("x-request-id", id);
         return id;
       },
+      serializers: {
+        req: (req) => ({
+          id: req.id,
+          method: req.method,
+          url: req.url,
+        }),
+        res: (res) => ({ statusCode: res.statusCode }),
+      },
     }),
   );
+
+  // API overview at the root.
+  app.use("/", rootRouter);
 
   // Health endpoints.
   app.use("/health", healthRouter);

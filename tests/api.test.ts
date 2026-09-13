@@ -38,6 +38,14 @@ describe("MENU SCAN public API", () => {
   }
 
   describe("health", () => {
+    it("GET / returns the API overview", async () => {
+      const response = await request(app).get("/");
+      expect(response.status).toBe(200);
+      expect(response.body.success).toBe(true);
+      expect(response.body.data.name).toBe("MENU SCAN API");
+      expect(response.body.data.endpoints.coffeeBySlug).toBe("/api/v1/coffees/:coffeeSlug");
+    });
+
     it("GET /health returns ok", async () => {
       const response = await request(app).get("/health");
       expect(response.status).toBe(200);

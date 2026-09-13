@@ -26,6 +26,16 @@ const coffeeSchema = new Schema(
       required: [true, "Coffee logo URL is required."],
       trim: true,
     },
+    /**
+     * scrypt hash of the coffee's 4-digit admin PIN (`scrypt$<salt>$<key>`).
+     * Never exposed through any API response; the plain PIN is only ever
+     * known by the person who set it.
+     */
+    adminPinHash: {
+      type: String,
+      required: false,
+      select: false,
+    },
   },
   {
     timestamps: true,

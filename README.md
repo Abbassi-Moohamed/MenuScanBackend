@@ -2,7 +2,7 @@
 
 Production-ready REST API for **MENU SCAN**, a QR-based digital menu platform that serves
 many independent coffee shops. Each coffee exposes its own public menu
-(`https://menuscan.vercel.app/:coffeeName`) backed by this API.
+(`https://menuscan.vercel.app/:coffeeSlug`) backed by this API.
 
 ```text
 Coffee (1) ──── (N) ItemCategory (1) ──── (N) Item
@@ -37,14 +37,15 @@ Coffee (1) ──── (N) ItemCategory (1) ──── (N) Item
 ```text
 src/
 ├── config/          # Environment (Zod-validated) + CORS policy
+├── auth/            # PIN hashing (node:crypto scrypt) + admin JWT issue/verify
 ├── controllers/     # Thin HTTP layer: parse req, call service, respond
-├── routes/          # Centralized mounting: /api/v1/...
+├── routes/          # Centralized mounting: /api/v1/... (+ admin sub-routers)
 ├── services/        # Business logic, not-found semantics, DTO shaping
 ├── repositories/    # All MongoDB queries live here (isolated from HTTP)
 ├── models/          # Mongoose schemas: Coffee, ItemCategory, Item
-├── middlewares/     # Validation, centralized error handler, 404
-├── validators/      # Zod schemas per resource
-├── types/           # Public DTOs + Express request augmentation
+├── middlewares/     # Validation, auth (requireAdmin/*), error handler, 404
+├── validators/      # Zod schemas per resource (public + admin)
+├── types/           # Public/admin DTOs + Express request augmentation
 ├── utils/           # ApiError, logger, response envelope helpers
 ├── db/              # Connection, migration runner + migrations, seed
 ├── app.ts           # Express app factory (no I/O — fully testable)
@@ -78,6 +79,9 @@ cp .env.example .env   # then edit values (see below)
 | `FRONTEND_URL` | — | `http://localhost:3000` | Primary CORS origin (the Next.js app) |
 | `CORS_ORIGINS` | — | _(empty)_ | Extra allowed origins, comma-separated (e.g. `https://menuscan.vercel.app`) |
 | `LOG_LEVEL` | — | `info` | pino level: `trace` \| `debug` \| `info` \| `warn` \| `error` \| `silent` |
+| `APP_ADMIN_PIN` | — | `3219` | Static 4-digit PIN for the MENU SCAN **application admin** (MVP gate, not real auth) |
+| `ADMIN_SECRET` | yes (prod) | dev value | Secret signing the short-lived admin bearer tokens (HS256). The dev default is **refused** when `NODE_ENV=production`. |
+| `ADMIN_TOKEN_TTL` | — | `12h` | Admin token lifetime in jsonwebtoken notation (`12h`, `1d`, …) |
 
 > `cors` options: `"*"` is only honored in `development`/`test`; the app refuses to boot with
 > `NODE_ENV=production` and a wildcard CORS origin. Production requires explicit origins.
@@ -96,6 +100,7 @@ npm run db:seed
 The seed creates 3 coffees — **Café El Manzah**, **Brew & Beans**, **Coffee Leaf** — each with
 its own distinct categories and items. Same-named categories (e.g. `Cafés` under both
 Café El Manzah and Brew & Beans) are included on purpose to prove data isolation works.
+Every seeded coffee uses the default coffee-admin PIN **`0000`** (stored as an scrypt hash).
 
 ### Running
 
@@ -119,6 +124,9 @@ npm run check      # typecheck + tests
 
 Base URL (local): `http://localhost:4000`
 
+> **Quick reference:** the full route map (every endpoint, auth requirement, example and
+> validation rule) lives in [`ROUTES.md`](./ROUTES.md).
+
 All public responses are wrapped in an envelope:
 
 ```json
@@ -141,8 +149,31 @@ Validation failures additionally include a `details` array:
 }
 ```
 
-Status codes used: `200 OK`, `201 Created`, `400 Bad Request`, `403 Forbidden`,
-`404 Not Found`, `409 Conflict`, `413 Payload Too Large`, `500 Internal Server Error`.
+Status codes used: `200 OK`, `201 Created`, `400 Bad Request`, `401 Unauthorized`,
+`403 Forbidden`, `404 Not Found`, `409 Conflict`, `413 Payload Too Large`, `500 Internal Server Error`.
+
+---
+
+### `GET /`
+
+API overview — what this server is and where its endpoints live. Handy when opening the
+API root (`http://localhost:4000/`) in a browser.
+
+```json
+{
+  "success": true,
+  "data": {
+    "name": "MENU SCAN API",
+    "apiVersion": "v1",
+    "endpoints": {
+      "health": "/health",
+      "readiness": "/health/ready",
+      "coffeeBySlug": "/api/v1/coffees/:coffeeSlug",
+      "itemsByCategory": "/api/v1/categories/:categoryId/items"
+    }
+  }
+}
+```
 
 ---
 
@@ -177,8 +208,8 @@ Returns `503` with `{ "status": "error", "database": "down" }` when MongoDB is u
 ### `GET /api/v1/coffees/:coffeeSlug`
 
 Resolves a coffee by its URL-safe **slug** and returns the coffee with **only its own**
-categories. This is the endpoint the frontend calls after extracting `coffeeName`
-from `https://menuscan.vercel.app/:coffeeName`.
+categories. This is the endpoint the frontend calls after extracting `coffeeSlug`
+from `https://menuscan.vercel.app/:coffeeSlug`.
 
 **Validation rules for `coffeeSlug`:** lowercase, 1–80 chars, letters/digits with optional
 dashes between segments (`cafe-el-manzah`). Matching is case-insensitive (the slug is
@@ -256,6 +287,165 @@ Errors:
 
 ---
 
+## Backoffice (admin APIs)
+
+MENU SCAN has a lightweight backoffice with two administrator levels. **There is no full
+authentication system** — the MVP uses a 4-digit PIN gate that issues a **short-lived signed
+bearer token**. This is a gate, not authentication; replace it before production.
+
+```text
+MENU SCAN App Admin       → manages ALL coffees (create / view / update / delete / reset PINs)
+Coffee Admin (own coffee) → manages ONLY their coffee's info, categories and items
+```
+
+### PIN rules
+
+- **App admin PIN** is static and configured via `APP_ADMIN_PIN` (default `3219`). It is
+  compared in constant time; it is never stored.
+- **Coffee PIN** belongs to a single coffee. Every new coffee starts at `0000`.
+- Coffee PINs are stored as **one-way scrypt hashes** (`node:crypto`, per-value salt) in
+  `Coffee.adminPinHash`. The plain PIN or the hash are **never** returned by any endpoint.
+- A coffee admin can change their own PIN (`PATCH /api/v1/admin/my-coffee/pin`); the app admin
+  can reset any coffee back to `0000` (`PATCH /api/v1/admin/coffees/:coffeeId/pin`).
+- All PINs are validated as **exactly 4 decimal digits**.
+
+### Authorization model
+
+1. `POST /api/v1/admin/auth/app` — verify the app-admin PIN → `APP_ADMIN` token.
+2. `POST /api/v1/admin/auth/coffee/:coffeeSlug` — verify that coffee's PIN → `COFFEE_ADMIN`
+   token carrying the owned `coffeeId`.
+3. Protected routes read `Authorization: Bearer <token>`; the token expires after
+   `ADMIN_TOKEN_TTL`.
+4. **Ownership is enforced server-side.** A coffee admin can only ever touch rows whose
+   `item → itemCategory → coffee` chain resolves to their own `coffeeId`. Supplying another
+   coffee's ObjectId returns `404`, never an extra admin surface. A `coffeeId` from the
+   frontend/body is never trusted — the target's real ownership is re-validated on every query.
+5. Role boundaries: coffee-admin tokens are rejected (`403`) on app-admin routes and vice-versa.
+
+### Auth endpoints
+
+#### `POST /api/v1/admin/auth/app`
+
+```http
+POST /api/v1/admin/auth/app
+Content-Type: application/json
+
+{ "pin": "3219" }
+```
+
+```json
+{
+  "success": true,
+  "data": {
+    "token": "eyJhbGciOiJIUzI1NiIs...",
+    "role": "APP_ADMIN",
+    "expiresIn": "12h"
+  }
+}
+```
+
+#### `POST /api/v1/admin/auth/coffee/:coffeeSlug`
+
+```http
+POST /api/v1/admin/auth/coffee/cafe-el-manzah
+Content-Type: application/json
+
+{ "pin": "0000" }
+```
+
+```json
+{
+  "success": true,
+  "data": {
+    "token": "eyJhbGciOiJIUzI1NiIs...",
+    "role": "COFFEE_ADMIN",
+    "coffeeId": "6aa5df5707f936c6faa35ca5",
+    "expiresIn": "12h"
+  }
+}
+```
+
+Errors: `401 Unauthorized` (missing/invalid/expired token) or `401 Invalid PIN` (wrong PIN),
+`404 Coffee not found`, `400 Validation failed`. All routes below require
+`Authorization: Bearer <token>`.
+
+### Application admin — coffees (all of them)
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/api/v1/admin/coffees` | List every coffee (with `categoryCount`) |
+| `POST` | `/api/v1/admin/coffees` | Create a coffee (default PIN `0000`, hashed) |
+| `GET` | `/api/v1/admin/coffees/:coffeeId` | Get one coffee |
+| `PATCH` | `/api/v1/admin/coffees/:coffeeId` | Update name / logo / slug |
+| `PATCH` | `/api/v1/admin/coffees/:coffeeId/pin` | Reset that coffee's admin PIN to `0000` |
+| `DELETE` | `/api/v1/admin/coffees/:coffeeId` | Delete coffee + cascade categories → items |
+
+`POST` body: `{ "name": "…" (required), "logo": "https://…" (required), "slug": "…" (optional) }`.
+If `slug` is omitted it is auto-generated from the name (`Café Ternat` → `cafe-ternat`),
+deduplicated with a numeric suffix if needed.
+
+```json
+{
+  "success": true,
+  "data": {
+    "id": "6aa5df5707f936c6faa35ca5",
+    "name": "Café Ternat",
+    "logo": "https://example.com/ternat-logo.png",
+    "slug": "cafe-ternat",
+    "categoryCount": 0,
+    "createdAt": "2026-09-13T00:29:04.522Z",
+    "updatedAt": "2026-09-13T00:29:04.522Z"
+  }
+}
+```
+
+Errors: `401` no/invalid token, `403` coffee admin, `404` unknown coffee, `409` slug taken,
+`400` validation.
+
+### Coffee admin — own coffee (`/api/v1/admin/my-coffee`)
+
+The working coffee is the one bound to the token. **No request input can retarget these
+routes to another coffee.**
+
+| Method | Path | Description |
+| --- | --- | --- |
+| `GET` | `/api/v1/admin/my-coffee` | Own coffee info (same DTO as above) |
+| `PATCH` | `/api/v1/admin/my-coffee` | Update own name / logo / slug |
+| `PATCH` | `/api/v1/admin/my-coffee/pin` | Change own PIN: `{ "currentPin", "newPin" }` |
+| `GET` | `/api/v1/admin/my-coffee/categories` | List own categories |
+| `POST` | `/api/v1/admin/my-coffee/categories` | Create category `{ "name" }` |
+| `PATCH` | `/api/v1/admin/my-coffee/categories/:categoryId` | Rename own category |
+| `DELETE` | `/api/v1/admin/my-coffee/categories/:categoryId` | Delete own category (cascades its items) |
+| `GET` | `/api/v1/admin/my-coffee/categories/:categoryId/items` | List items of own category |
+| `POST` | `/api/v1/admin/my-coffee/categories/:categoryId/items` | Create item in own category |
+| `PATCH` | `/api/v1/admin/my-coffee/items/:itemId` | Update own item |
+| `DELETE` | `/api/v1/admin/my-coffee/items/:itemId` | Delete own item |
+
+`POST /categories` body: `{ "name": "…" }`. Item bodies:
+`{ "name", "description"?, "price" (≥ 0), "image"? }` — on `PATCH` every field is optional but at
+least one must be provided. `PATCH /my-coffee/pin` requires `currentPin` and `newPin`, both exactly
+4 digits and different.
+
+**Ownership behavior:** targeting a `categoryId` / `itemId` that belongs to *another* coffee
+returns `404 Category not found` / `404 Item not found`, and the other coffee's data is never
+modified.
+
+### Deletion strategy (no orphans)
+
+Coffee and category deletes are dependency-ordered cascades:
+
+```text
+DELETE Coffee   → delete its items → delete its categories → delete the coffee
+DELETE Category → delete its items → delete the category
+```
+
+Rows are removed children-first so a partially-failed run can never leave items orphaned under a
+surviving category. On a replica-set deployment the same ordered deletes should run inside a
+multi-document transaction; the standalone dev MongoDB does not support transactions, so the
+deterministic order is the safety mechanism.
+
+---
+
 ## Data isolation (multi-tenancy)
 
 MENU SCAN serves unlimited independent coffee shops. The rules:
@@ -284,13 +474,21 @@ exactly once per database.
 
 Add a new migration:
 
-1. Create a new file `src/db/migrations/0002_....ts` implementing `{ name, up, down? }`.
-2. Register it by appending to the ordered array in `src/db/migrations/index.ts`.
+1. Create a new file `src/db/migrations/0003_....ts` implementing `{ name, up, down? }`.
+2. Register it by importing it in `src/db/migrate.ts` (each file pushes itself onto the
+   managed `migrations` array in `src/db/migrations/index.ts`).
 3. Run `npm run db:migrate`.
 
 Rules: never rename, reorder or edit an already-applied migration; append new ones at the end.
 
-### Indexes created by `0001_init`
+### Indexes and validators created
+
+| Migration | What it does |
+| --- | --- |
+| `0001_init` | Creates the three collections with `$jsonSchema` validators + unique indexes (`coffees.slug`, `itemcategories (coffeeId, name)`) |
+| `0002_admin` | `collMod` on `coffees`: adds the nullable `adminPinHash` field to the validator |
+
+Tables below describe the `0001_init` indexes:
 
 | Collection | Index | Uniqueness |
 | --- | --- | --- |
@@ -313,9 +511,16 @@ consistent.
 - **Error middleware** never leaks stack traces, credentials or internal details in responses;
   internals are written only to server logs. `DATABASE_URL` is never logged.
 - Secrets live only in `.env` (git-ignored); a template ships as `.env.example`.
+- **PINs**: coffee PINs are stored only as one-way `node:crypto` **scrypt** hashes with per-value
+  salt and time-safe comparison; the app-admin PIN is compared in constant time and never stored.
+- **Admin tokens**: short-lived HS256 bearer tokens (secret `ADMIN_SECRET`, issuer-bound, expiry
+  `ADMIN_TOKEN_TTL`). Wrong/missing/expired tokens fail with `401`.
+- **Ownership**: coffee admins are scoped to one `coffeeId` embedded in their token; every
+  category/item operation re-validates the `item → itemCategory → coffee` chain server-side.
 
 ## Not included
 
-No customer accounts, auth, cart, checkout, payments, orders, reviews, loyalty or admin
-dashboard — by design for this version. The layered `repositories → services → controllers`
-structure means an admin API can plug in later without touching the public menu architecture.
+Not built yet (by design for this version): customer accounts or authentication, cart,
+checkout, payments, orders, reviews, loyalty, analytics, notifications, and any admin roles
+beyond the two listed above. The layered `repositories → services → controllers` structure
+means these can all plug in later without touching the existing public/admin architecture.
