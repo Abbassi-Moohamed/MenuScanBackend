@@ -8,7 +8,7 @@ many independent coffee shops. Each coffee exposes its own public menu
 Coffee (1) ──── (N) ItemCategory (1) ──── (N) Item
 ```
 
-- **Node.js 24** · **Express 5** · **TypeScript** (strict) · **MongoDB** · **Mongoose 9**
+- **Node.js 22 (LTS)** · **Express 5** · **TypeScript** (strict) · **MongoDB** · **Mongoose 9**
 - **Zod** request validation · centralized error handling · strict CORS · helmet security headers
 - Versioned public API (`/api/v1/...`) · health endpoints · versioned DB migrations · dev seed · test suite
 
@@ -16,7 +16,7 @@ Coffee (1) ──── (N) ItemCategory (1) ──── (N) Item
 
 ## Requirements
 
-- Node.js 24 (pinned in `package.json` `engines`; built/tested on Node 24.11.1)
+- Node.js 22 LTS (pinned in `package.json` `engines`; matched with `@types/node@22`)
 - A MongoDB server (local or Atlas). Anything on `mongodb://`/`mongodb+srv://` works — the
   connection is fully driven by `DATABASE_URL`.
 
@@ -90,10 +90,11 @@ cp .env.example .env   # then edit values (see below)
 
 - The build needs the devDependencies (they contain TypeScript itself and `@types/node`).
   Render and similar hosts set `NODE_ENV=production` during builds, which makes `npm install`
-  skip devDependencies. The included `.npmrc` (`include=dev`) overrides that, so the default
-  command **`npm install && npm run build`** works as-is. `npm start` runs `node dist/server.js`.
-- Node is pinned to `24.x` in `engines`; Render resolves it from `package.json` and does not
-  need the version set manually.
+  / `npm ci` skip devDependencies. The included `.npmrc` (`include=dev`) overrides that.
+  Recommended Render **build command**: `npm ci && npm run build`.
+  Start command: `npm start` → `node dist/server.js`.
+- Node is pinned to `22.x` (LTS) in `engines`; Render resolves it from `package.json` and does
+  not need the version set manually.
 - Set these in the host's environment (never in git): `DATABASE_URL` (must include the
   database name), `ADMIN_SECRET` (≥ 16 chars — required in production), `APP_ADMIN_PIN`,
   `FRONTEND_URL`, optional `CORS_ORIGINS`.
