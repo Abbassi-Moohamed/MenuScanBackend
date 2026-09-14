@@ -27,6 +27,12 @@ import {
   updateCoffeeBodySchema,
   updateItemBodySchema,
 } from "../../validators/admin.validators.js";
+import {
+  listMyOrdersController,
+  getMyOrderController,
+  updateMyOrderStatusController,
+} from "../../controllers/admin/coffee-admin/order.controller.js";
+import { orderIdParamsSchema, orderStatusBodySchema, listOrdersQuerySchema } from "../../validators/order.validators.js";
 
 /**
  * Coffee-admin endpoints. Mounted at /my-coffee; the owning coffee comes from
@@ -36,6 +42,14 @@ import {
 export const coffeeAdminRouter = Router();
 
 coffeeAdminRouter.use(requireAdmin, requireCoffeeAdmin);
+
+coffeeAdminRouter.get("/orders", validate({ query: listOrdersQuerySchema }), listMyOrdersController);
+coffeeAdminRouter.get("/orders/:orderId", validate({ params: orderIdParamsSchema }), getMyOrderController);
+coffeeAdminRouter.patch(
+  "/orders/:orderId/status",
+  validate({ params: orderIdParamsSchema, body: orderStatusBodySchema }),
+  updateMyOrderStatusController,
+);
 
 // Coffee information + PIN change.
 coffeeAdminRouter.get("/", getMyCoffeeController);

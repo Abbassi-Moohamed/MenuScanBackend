@@ -49,6 +49,28 @@ Content-Type: application/json
 { "pin": "3219" }
 ```
 
+## 3.5 Visitor orders
+
+| Method | Route | Auth | Description |
+| --- | --- | --- | --- |
+| `POST` | `/api/v1/orders` | — | Create an order from the selected coffee menu |
+| `GET` | `/api/v1/orders/:orderId` | — | Read the current status of an order |
+
+The request must include `coffeeSlug`, a positive table number (1–10000), and
+one or more `{ "itemId", "quantity" }` lines. The server verifies that
+every item belongs to that coffee, is available, and calculates the total from
+the current menu price (including an active promotion). Order lines store
+immutable item id, name, quantity, unit price and line subtotal snapshots.
+
+```json
+{
+  "coffeeSlug": "cafe-el-manzah",
+  "tableNumber": 12,
+  "items": [{ "itemId": "…", "quantity": 2 }],
+  "notes": "No sugar"
+}
+```
+
 ```json
 { "success": true, "data": { "token": "eyJ…", "role": "APP_ADMIN", "expiresIn": "12h" } }
 ```
@@ -107,6 +129,13 @@ All routes below act on the coffee bound to the token. Supplying another coffee'
 | `POST` | `/api/v1/admin/my-coffee/categories/:categoryId/items` | `COFFEE_ADMIN` | Create item in own category |
 | `PATCH` | `/api/v1/admin/my-coffee/items/:itemId` | `COFFEE_ADMIN` | Update own item |
 | `DELETE` | `/api/v1/admin/my-coffee/items/:itemId` | `COFFEE_ADMIN` | Delete own item |
+| `GET` | `/api/v1/admin/my-coffee/orders` | `COFFEE_ADMIN` | List own orders (`status`, `page`, `limit` filters) |
+| `GET` | `/api/v1/admin/my-coffee/orders/:orderId` | `COFFEE_ADMIN` | Get one own order |
+| `PATCH` | `/api/v1/admin/my-coffee/orders/:orderId/status` | `COFFEE_ADMIN` | Move an own order through its valid workflow |
+
+Order workflow: `PENDING → CONFIRMED` or `PENDING → REJECTED`. Terminal states
+cannot be changed. Order queries are always scoped to the coffee in the bearer
+token.
 
 ```http
 POST /api/v1/admin/my-coffee/categories

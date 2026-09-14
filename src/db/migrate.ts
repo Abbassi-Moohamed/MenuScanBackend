@@ -9,6 +9,8 @@ import "./migrations/0003_images.js";
 import "./migrations/0004_category_images.js";
 import "./migrations/0005_coffee_cover_images.js";
 import "./migrations/0006_item_availability_promotion.js";
+import "./migrations/0007_orders.js";
+import "./migrations/0008_order_contract.js";
 import { migrations } from "./migrations/index.js";
 import { logger } from "../utils/logger.js";
 

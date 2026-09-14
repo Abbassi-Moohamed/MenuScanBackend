@@ -96,3 +96,6 @@ export interface CoffeeUpdateInput {
   cover?: string;
   slug?: string;
 }
+
+export type { OrderStatus } from "../models/order.model.js";
+export type { OrderDto, OrderItemDto } from "./order.js";
