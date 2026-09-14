@@ -8,6 +8,16 @@ const itemCategorySchema = new Schema(
       trim: true,
       maxlength: [80, "Category name must be at most 80 characters."],
     },
+    image: {
+      type: String,
+      trim: true,
+      default: null,
+    },
+    imageId: {
+      type: String,
+      trim: true,
+      default: null,
+    },
     coffeeId: {
       type: Schema.Types.ObjectId,
       ref: "Coffee",

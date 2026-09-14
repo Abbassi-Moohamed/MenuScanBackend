@@ -68,12 +68,14 @@ function coffeeToDto(coffee: {
 function categoryToDto(category: {
   _id: import("mongoose").Types.ObjectId;
   name: string;
+  image: string | null;
   createdAt: Date;
   updatedAt: Date;
 }): AdminCategoryDto {
   return {
     id: category._id.toString(),
     name: category.name,
+    image: category.image,
     createdAt: category.createdAt,
     updatedAt: category.updatedAt,
   };
@@ -186,9 +188,12 @@ export async function listCategories(coffeeId: string): Promise<AdminCategoryDto
   return categories.map(categoryToDto);
 }
 
-export async function createCategory(coffeeId: string, name: string): Promise<AdminCategoryDto> {
+export async function createCategory(coffeeId: string, name: string, image?: string): Promise<AdminCategoryDto> {
   try {
-    const category = await createCategoryForCoffee(coffeeId, name);
+    const admin: AdminContext = { role: "COFFEE_ADMIN", coffeeId };
+    const resolved = image ? await resolveImageForEntity({ url: image, admin }) : { url: null, imageId: null };
+    const category = await createCategoryForCoffee(coffeeId, name, resolved.url, resolved.imageId);
+    if (resolved.imageId) await attachImageToEntity(resolved.imageId, coffeeId);
     return categoryToDto(category);
   } catch (error) {
     if (isDuplicateKeyError(error)) {
@@ -202,10 +207,19 @@ export async function updateCategory(
   coffeeId: string,
   categoryId: string,
   name: string,
+  image?: string,
 ): Promise<AdminCategoryDto> {
   try {
-    const category = await updateCategoryOwnedByCoffee(coffeeId, categoryId, name);
+    const existing = await findCategoryOwnedByCoffee(coffeeId, categoryId);
+    if (!existing) throw new ApiError(404, "Category not found");
+    const admin: AdminContext = { role: "COFFEE_ADMIN", coffeeId };
+    const resolved = image ? await resolveImageForEntity({ url: image, admin }) : { url: null, imageId: null };
+    const category = await updateCategoryOwnedByCoffee(coffeeId, categoryId, name, resolved.url, resolved.imageId);
     if (!category) throw new ApiError(404, "Category not found");
+    if (resolved.imageId) await attachImageToEntity(resolved.imageId, coffeeId);
+    if (existing.imageId && existing.imageId !== resolved.imageId) {
+      await deleteImage(existing.imageId, { coffeeId });
+    }
     return categoryToDto(category);
   } catch (error) {
     if (isDuplicateKeyError(error)) {
@@ -225,8 +239,11 @@ export async function deleteCategory(coffeeId: string, categoryId: string): Prom
   if (!deleted) throw new ApiError(404, "Category not found");
 
   const imageIds = [...new Set(items.map((item) => item.imageId).filter((id): id is string => Boolean(id)))];
+  if (category.imageId) {
+    imageIds.push(category.imageId);
+  }
   for (const imageId of imageIds) {
-    await deleteImage(imageId, { coffeeId });
+    await deleteImage(imageId, { coffeeId, categoryId });
   }
 
   return { id: categoryId };

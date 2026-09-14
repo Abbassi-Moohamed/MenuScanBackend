@@ -10,6 +10,7 @@ import {
   updateCoffeePinHash,
 } from "../../repositories/admin/coffee.repository.js";
 import { listItemImageIdsOfCoffee } from "../../repositories/admin/item.repository.js";
+import { listCategoryImageIdsOfCoffee } from "../../repositories/admin/category.repository.js";
 import { attachImageToEntity, deleteImage, resolveImageForEntity } from "../image.service.js";
 import type { AdminCoffeeDto, AdminContext, CoffeeUpdateInput } from "../../types/index.js";
 import { ApiError } from "../../utils/ApiError.js";
@@ -144,6 +145,7 @@ export async function deleteCoffee(coffeeId: string): Promise<{ id: string }> {
   if (!existing) throw new ApiError(404, "Coffee not found");
 
   const itemImageIds = await listItemImageIdsOfCoffee(coffeeId);
+  const categoryImageIds = await listCategoryImageIdsOfCoffee(coffeeId);
 
   const deleted = await deleteCoffeeWithDependencies(coffeeId);
   if (!deleted) throw new ApiError(404, "Coffee not found");
@@ -151,6 +153,7 @@ export async function deleteCoffee(coffeeId: string): Promise<{ id: string }> {
   const allImageIds = [
     ...(existing.logoImageId ? [existing.logoImageId] : []),
     ...itemImageIds,
+    ...categoryImageIds,
   ];
   for (const imageId of new Set(allImageIds)) {
     await deleteImage(imageId, { coffeeId });

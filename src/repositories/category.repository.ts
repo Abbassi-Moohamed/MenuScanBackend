@@ -12,6 +12,7 @@ export interface ItemRecord {
 export interface CategoryWithItemsRecord {
   id: string;
   name: string;
+  image: string | null;
   items: ItemRecord[];
 }
 
@@ -21,7 +22,7 @@ export interface CategoryWithItemsRecord {
  * items of the requested category.
  */
 export async function findCategoryWithItemsById(categoryId: string): Promise<CategoryWithItemsRecord | null> {
-  const category = await ItemCategoryModel.findById(categoryId).select({ name: 1 }).lean().exec();
+  const category = await ItemCategoryModel.findById(categoryId).select({ name: 1, image: 1 }).lean().exec();
   if (!category) return null;
 
   const items = await ItemModel.find({ itemCategoryId: category._id })
@@ -33,6 +34,7 @@ export async function findCategoryWithItemsById(categoryId: string): Promise<Cat
   return {
     id: category._id.toString(),
     name: category.name,
+    image: category.image ?? null,
     items: items.map((item) => ({
       id: item._id.toString(),
       name: item.name,

@@ -63,6 +63,7 @@ export const updateCoffeeBodySchema = updateCoffeeFields.refine((value) => Objec
 
 export const categoryBodySchema = z.object({
   name: z.string().trim().min(1, "Category name is required.").max(80, "Category name must be at most 80 characters."),
+  image: z.url("image must be a valid URL.").optional(),
 });
 
 export const itemBodySchema = z.object({

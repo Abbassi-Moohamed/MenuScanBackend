@@ -6,6 +6,7 @@
 export interface CategoryDto {
   id: string;
   name: string;
+  image: string | null;
 }
 
 export interface CoffeeWithCategoriesDto {
@@ -60,6 +61,7 @@ export interface AdminCoffeeDto {
 export interface AdminCategoryDto {
   id: string;
   name: string;
+  image: string | null;
   createdAt: Date;
   updatedAt: Date;
 }

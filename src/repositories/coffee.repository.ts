@@ -4,6 +4,7 @@ import { ItemCategoryModel } from "../models/item-category.model.js";
 export interface CategoryRecord {
   id: string;
   name: string;
+  image: string | null;
 }
 
 export interface CoffeeWithCategoriesRecord {
@@ -25,7 +26,7 @@ export async function findCoffeeWithCategoriesBySlug(slug: string): Promise<Coff
 
   const categories = await ItemCategoryModel.find({ coffeeId: coffee._id })
     .sort({ name: 1 })
-    .select({ name: 1 })
+    .select({ name: 1, image: 1 })
     .lean()
     .exec();
 
@@ -37,6 +38,7 @@ export async function findCoffeeWithCategoriesBySlug(slug: string): Promise<Coff
     categories: categories.map((category) => ({
       id: category._id.toString(),
       name: category.name,
+      image: category.image ?? null,
     })),
   };
 }

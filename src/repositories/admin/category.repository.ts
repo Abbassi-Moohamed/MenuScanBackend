@@ -11,19 +11,30 @@ import { ItemModel } from "../../models/item.model.js";
 export interface AdminCategoryRow {
   _id: Types.ObjectId;
   name: string;
+  image: string | null;
+  imageId: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
 
-const SAFE_FIELDS = { name: 1, createdAt: 1, updatedAt: 1 } as const;
+const SAFE_FIELDS = { name: 1, image: 1, imageId: 1, createdAt: 1, updatedAt: 1 } as const;
 
 function toRow(category: {
   _id: Types.ObjectId;
   name: string;
+  image?: string | null;
+  imageId?: string | null;
   createdAt: Date;
   updatedAt: Date;
 }): AdminCategoryRow {
-  return { _id: category._id, name: category.name, createdAt: category.createdAt, updatedAt: category.updatedAt };
+  return {
+    _id: category._id,
+    name: category.name,
+    image: category.image ?? null,
+    imageId: category.imageId ?? null,
+    createdAt: category.createdAt,
+    updatedAt: category.updatedAt,
+  };
 }
 
 export async function listCategoriesOfCoffee(coffeeId: string): Promise<AdminCategoryRow[]> {
@@ -36,14 +47,27 @@ export async function listCategoriesOfCoffee(coffeeId: string): Promise<AdminCat
   return categories.map(toRow);
 }
 
+export async function listCategoryImageIdsOfCoffee(coffeeId: string): Promise<string[]> {
+  if (!Types.ObjectId.isValid(coffeeId)) return [];
+  const categories = await ItemCategoryModel.find({ coffeeId, imageId: { $ne: null } })
+    .select({ imageId: 1 })
+    .lean()
+    .exec();
+  return categories.map((category) => category.imageId).filter((id): id is string => Boolean(id));
+}
+
 export async function createCategoryForCoffee(
   coffeeId: string,
   name: string,
+  image?: string | null,
+  imageId?: string | null,
 ): Promise<AdminCategoryRow> {
-  const category = await ItemCategoryModel.create({ coffeeId, name });
+  const category = await ItemCategoryModel.create({ coffeeId, name, image: image ?? null, imageId: imageId ?? null });
   return {
     _id: category._id,
     name: category.name,
+    image: category.image ?? null,
+    imageId: category.imageId ?? null,
     createdAt: category.createdAt,
     updatedAt: category.updatedAt,
   };
@@ -63,11 +87,13 @@ export async function updateCategoryOwnedByCoffee(
   coffeeId: string,
   categoryId: string,
   name: string,
+  image: string | null,
+  imageId: string | null,
 ): Promise<AdminCategoryRow | null> {
   if (!Types.ObjectId.isValid(coffeeId) || !Types.ObjectId.isValid(categoryId)) return null;
   const category = await ItemCategoryModel.findOneAndUpdate(
     { _id: categoryId, coffeeId },
-    { name },
+    { name, image, imageId },
     { returnDocument: "after", runValidators: true },
   )
     .select(SAFE_FIELDS)

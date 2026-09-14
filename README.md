@@ -642,8 +642,8 @@ Every route in this section requires a valid bearer token whose role is
 | `PATCH` | `/api/v1/admin/my-coffee` | `{ name?, logo?, slug? }` | Update the assigned coffee |
 | `PATCH` | `/api/v1/admin/my-coffee/pin` | `{ currentPin, newPin }` | Change the assigned coffee PIN |
 | `GET` | `/api/v1/admin/my-coffee/categories` | — | List assigned coffee categories |
-| `POST` | `/api/v1/admin/my-coffee/categories` | `{ name }` | Create a category |
-| `PATCH` | `/api/v1/admin/my-coffee/categories/:categoryId` | `{ name }` | Rename an owned category |
+| `POST` | `/api/v1/admin/my-coffee/categories` | `{ name, image? }` | Create a category with an optional image |
+| `PATCH` | `/api/v1/admin/my-coffee/categories/:categoryId` | `{ name, image? }` | Update an owned category and optional image |
 | `DELETE` | `/api/v1/admin/my-coffee/categories/:categoryId` | — | Delete category and its items |
 | `GET` | `/api/v1/admin/my-coffee/categories/:categoryId/items` | — | List items in an owned category |
 | `POST` | `/api/v1/admin/my-coffee/categories/:categoryId/items` | `{ name, price, description?, image? }` | Create an item |

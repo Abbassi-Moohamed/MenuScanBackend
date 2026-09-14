@@ -114,7 +114,7 @@ export async function attachImageToEntity(imageId: string | null, coffeeId: stri
 /** True when another entity (or the same one in `exclude`) still references the image. */
 async function isImageStillReferenced(
   imageId: string,
-  exclude?: { coffeeId?: string; itemId?: string },
+  exclude?: { coffeeId?: string; itemId?: string; categoryId?: string },
 ): Promise<boolean> {
   const items = await ItemModel.find({ imageId }).select({ _id: 1 }).lean().exec();
   for (const item of items) {
@@ -124,6 +124,11 @@ async function isImageStillReferenced(
   const coffees = await CoffeeModel.find({ logoImageId: imageId }).select({ _id: 1 }).lean().exec();
   for (const coffee of coffees) {
     if (coffee._id.toString() !== exclude?.coffeeId) return true;
+  }
+
+  const categories = await ItemCategoryModel.find({ imageId }).select({ _id: 1 }).lean().exec();
+  for (const category of categories) {
+    if (category._id.toString() !== exclude?.categoryId) return true;
   }
 
   return false;
@@ -136,6 +141,9 @@ async function isImageStillReferenced(
 async function isImageUsedByCoffee(imageId: string, coffeeId: string): Promise<boolean> {
   const coffee = await CoffeeModel.exists({ _id: coffeeId, logoImageId: imageId });
   if (coffee) return true;
+
+  const categories = await ItemCategoryModel.exists({ imageId, coffeeId });
+  if (categories) return true;
 
   const items = await ItemModel.find({ imageId }).select({ itemCategoryId: 1 }).lean().exec();
   if (items.length === 0) return false;
@@ -164,7 +172,10 @@ async function assertCanManageImage(imageId: string, admin: AdminContext): Promi
  * its metadata. Cloudflare failures are logged, not thrown: the MongoDB state
  * must never keep pointing at an image ScanMenu has decided to remove.
  */
-export async function deleteImage(imageId: string, exclude?: { coffeeId?: string; itemId?: string }): Promise<void> {
+export async function deleteImage(
+  imageId: string,
+  exclude?: { coffeeId?: string; itemId?: string; categoryId?: string },
+): Promise<void> {
   if (!imageId) return;
   if (await isImageStillReferenced(imageId, exclude)) return;
 
