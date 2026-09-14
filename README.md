@@ -502,6 +502,11 @@ GET /api/v1/categories/:categoryId/items
 Returns only the items whose `itemCategoryId` is the requested category.
 Items are sorted by name.
 
+Item pricing uses `price > 0`. `promotion` is an optional promotional price,
+stored as `null` when absent, and must satisfy `0 < promotion < price`.
+`isAvailable` defaults to `true`; setting it to `false` keeps the item in the
+database and admin interface while marking it unavailable in the public menu.
+
 ```bash
 curl http://localhost:4000/api/v1/categories/64f000000000000000000010/items
 ```
@@ -649,7 +654,7 @@ Every route in this section requires a valid bearer token whose role is
 | `DELETE` | `/api/v1/admin/my-coffee/categories/:categoryId` | — | Delete category and its items |
 | `GET` | `/api/v1/admin/my-coffee/categories/:categoryId/items` | — | List items in an owned category |
 | `POST` | `/api/v1/admin/my-coffee/categories/:categoryId/items` | `{ name, price, description?, image? }` | Create an item |
-| `PATCH` | `/api/v1/admin/my-coffee/items/:itemId` | `{ name?, price?, description?, image? }` | Update an owned item |
+| `PATCH` | `/api/v1/admin/my-coffee/items/:itemId` | `{ name?, price?, promotion?, isAvailable?, description?, image? }` | Update an owned item |
 | `DELETE` | `/api/v1/admin/my-coffee/items/:itemId` | — | Delete an owned item |
 
 Category example:

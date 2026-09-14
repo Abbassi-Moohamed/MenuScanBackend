@@ -17,7 +17,16 @@ const itemSchema = new Schema(
     price: {
       type: Number,
       required: [true, "Item price is required."],
-      min: [0, "Item price must be zero or greater."],
+      min: [0.001, "Item price must be greater than zero."],
+    },
+    promotion: {
+      type: Number,
+      default: null,
+      min: [0.001, "Promotional price must be greater than zero."],
+    },
+    isAvailable: {
+      type: Boolean,
+      default: true,
     },
     image: {
       type: String,

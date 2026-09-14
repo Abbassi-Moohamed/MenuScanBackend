@@ -23,6 +23,8 @@ export interface ItemDto {
   name: string;
   description: string | null;
   price: number;
+  promotion: number | null;
+  isAvailable: boolean;
   image: string | null;
 }
 
@@ -73,6 +75,8 @@ export interface AdminItemDto {
   name: string;
   description: string | null;
   price: number;
+  promotion: number | null;
+  isAvailable: boolean;
   image: string | null;
   itemCategoryId: string;
   createdAt: Date;

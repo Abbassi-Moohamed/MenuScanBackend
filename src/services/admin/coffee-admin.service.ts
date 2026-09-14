@@ -41,6 +41,8 @@ export interface CreateItemInput {
   name: string;
   description?: string;
   price: number;
+  promotion?: number | null;
+  isAvailable?: boolean;
   image?: string;
 }
 
@@ -48,9 +50,17 @@ export interface UpdateItemInput {
   name?: string;
   description?: string;
   price?: number;
+  promotion?: number | null;
+  isAvailable?: boolean;
   image?: string;
   /** Cloudflare image id resolved from `image`; never accepted from the client. */
   imageId?: string | null;
+}
+
+function validateItemPricing(price: number, promotion: number | null): void {
+  if (price <= 0 || (promotion !== null && (promotion <= 0 || promotion >= price))) {
+    throw new ApiError(400, "Promotional price must be greater than zero and lower than the regular price.");
+  }
 }
 
 function coffeeToDto(coffee: {
@@ -87,6 +97,8 @@ function itemToDto(item: {
   name: string;
   description: string | null;
   price: number;
+  promotion: number | null;
+  isAvailable: boolean;
   image: string | null;
   itemCategoryId: import("mongoose").Types.ObjectId;
   createdAt: Date;
@@ -97,6 +109,8 @@ function itemToDto(item: {
     name: item.name,
     description: item.description,
     price: item.price,
+    promotion: item.promotion ?? null,
+    isAvailable: item.isAvailable ?? true,
     image: item.image,
     itemCategoryId: item.itemCategoryId.toString(),
     createdAt: item.createdAt,
@@ -278,6 +292,7 @@ export async function createItem(
 ): Promise<AdminItemDto> {
   const category = await findCategoryOwnedByCoffee(coffeeId, categoryId);
   if (!category) throw new ApiError(404, "Category not found");
+  validateItemPricing(input.price, input.promotion ?? null);
 
   const admin: AdminContext = { role: "COFFEE_ADMIN", coffeeId };
   let image: string | null = input.image ?? null;
@@ -292,6 +307,8 @@ export async function createItem(
     name: input.name,
     description: input.description ?? null,
     price: input.price,
+    promotion: input.promotion ?? null,
+    isAvailable: input.isAvailable ?? true,
     image,
     imageId,
   });
@@ -307,12 +324,15 @@ export async function updateItem(
 ): Promise<AdminItemDto> {
   const existing = await findItemOwnedByCoffee(coffeeId, itemId);
   if (!existing) throw new ApiError(404, "Item not found");
+  validateItemPricing(input.price ?? existing.price, input.promotion !== undefined ? input.promotion : existing.promotion);
 
   const admin: AdminContext = { role: "COFFEE_ADMIN", coffeeId };
   const patch: UpdateItemInput = {};
   if (input.name !== undefined) patch.name = input.name;
   if (input.description !== undefined) patch.description = input.description;
   if (input.price !== undefined) patch.price = input.price;
+  if (input.promotion !== undefined) patch.promotion = input.promotion;
+  if (input.isAvailable !== undefined) patch.isAvailable = input.isAvailable;
 
   let newImageId: string | null | undefined;
   if (input.image !== undefined) {

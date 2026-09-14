@@ -71,19 +71,30 @@ export const categoryBodySchema = z.object({
 export const itemBodySchema = z.object({
   name: z.string().trim().min(1, "Item name is required.").max(120, "Item name must be at most 120 characters."),
   description: z.string().trim().max(500, "Item description must be at most 500 characters.").optional(),
-  price: z.number().finite().nonnegative("Item price must be zero or greater."),
+  price: z.number().finite().positive("Item price must be greater than zero."),
+  promotion: z.number().finite().positive("Promotional price must be greater than zero.").nullable().optional().default(null),
+  isAvailable: z.boolean().optional().default(true),
   image: z.url("image must be a valid URL.").optional(),
+}).refine((value) => value.promotion === null || value.promotion < value.price, {
+  message: "Promotional price must be lower than the regular price.",
+  path: ["promotion"],
 });
 
 export const updateItemBodySchema = z
   .object({
     name: z.string().trim().min(1, "Item name is required.").max(120, "Item name must be at most 120 characters.").optional(),
     description: z.string().trim().max(500, "Item description must be at most 500 characters.").optional(),
-    price: z.number().finite().nonnegative("Item price must be zero or greater.").optional(),
+    price: z.number().finite().positive("Item price must be greater than zero.").optional(),
+    promotion: z.number().finite().positive("Promotional price must be greater than zero.").nullable().optional(),
+    isAvailable: z.boolean().optional(),
     image: z.url("image must be a valid URL.").optional(),
   })
   .refine((value) => Object.keys(value).length >= 1, {
     message: "Provide at least one field to update.",
+  })
+  .refine((value) => value.promotion === undefined || value.promotion === null || value.price === undefined || value.promotion < value.price, {
+    message: "Promotional price must be lower than the regular price.",
+    path: ["promotion"],
   });
 
 export const changePinBodySchema = z

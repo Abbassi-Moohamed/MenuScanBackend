@@ -13,6 +13,8 @@ export interface AdminItemRow {
   name: string;
   description: string | null;
   price: number;
+  promotion: number | null;
+  isAvailable: boolean;
   image: string | null;
   /** Cloudflare image id backing `image`, null for external URLs. */
   imageId: string | null;
@@ -25,6 +27,8 @@ export interface AdminItemCreateInput {
   name: string;
   description?: string | null;
   price: number;
+  promotion?: number | null;
+  isAvailable?: boolean;
   image?: string | null;
   imageId?: string | null;
 }
@@ -33,6 +37,8 @@ const SAFE_FIELDS = {
   name: 1,
   description: 1,
   price: 1,
+  promotion: 1,
+  isAvailable: 1,
   image: 1,
   imageId: 1,
   itemCategoryId: 1,
@@ -45,6 +51,8 @@ function toRow(item: {
   name: string;
   description?: string | null;
   price: number;
+  promotion?: number | null;
+  isAvailable?: boolean;
   image?: string | null;
   imageId?: string | null;
   itemCategoryId: Types.ObjectId;
@@ -56,6 +64,8 @@ function toRow(item: {
     name: item.name,
     description: item.description ?? null,
     price: item.price,
+    promotion: item.promotion ?? null,
+    isAvailable: item.isAvailable ?? true,
     image: item.image ?? null,
     imageId: item.imageId ?? null,
     itemCategoryId: item.itemCategoryId,
@@ -84,6 +94,8 @@ export async function createItemForCategory(
     name: item.name,
     description: item.description ?? null,
     price: item.price,
+    promotion: item.promotion ?? null,
+    isAvailable: item.isAvailable ?? true,
     image: item.image ?? null,
     imageId: item.imageId ?? null,
     itemCategoryId: item.itemCategoryId,
@@ -127,6 +139,8 @@ export async function updateItemOwnedByCoffee(
   if (patch.name !== undefined) cleanedPatch.name = patch.name;
   if (patch.description !== undefined) cleanedPatch.description = patch.description;
   if (patch.price !== undefined) cleanedPatch.price = patch.price;
+  if (patch.promotion !== undefined) cleanedPatch.promotion = patch.promotion;
+  if (patch.isAvailable !== undefined) cleanedPatch.isAvailable = patch.isAvailable;
   if (patch.image !== undefined) cleanedPatch.image = patch.image;
   if (patch.imageId !== undefined) cleanedPatch.imageId = patch.imageId;
 

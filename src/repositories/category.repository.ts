@@ -6,6 +6,8 @@ export interface ItemRecord {
   name: string;
   description: string | null;
   price: number;
+  promotion: number | null;
+  isAvailable: boolean;
   image: string | null;
 }
 
@@ -27,7 +29,7 @@ export async function findCategoryWithItemsById(categoryId: string): Promise<Cat
 
   const items = await ItemModel.find({ itemCategoryId: category._id })
     .sort({ name: 1 })
-    .select({ name: 1, description: 1, price: 1, image: 1 })
+    .select({ name: 1, description: 1, price: 1, promotion: 1, isAvailable: 1, image: 1 })
     .lean()
     .exec();
 
@@ -40,6 +42,8 @@ export async function findCategoryWithItemsById(categoryId: string): Promise<Cat
       name: item.name,
       description: item.description ?? null,
       price: item.price,
+      promotion: item.promotion ?? null,
+      isAvailable: item.isAvailable ?? true,
       image: item.image ?? null,
     })),
   };
