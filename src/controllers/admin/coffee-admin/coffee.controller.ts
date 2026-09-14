@@ -18,7 +18,7 @@ export async function getMyCoffeeController(req: Request, res: Response): Promis
 
 /** PATCH /api/v1/admin/my-coffee */
 export async function updateMyCoffeeController(req: Request, res: Response): Promise<void> {
-  const body = req.validated!.body as { name?: string; logo?: string; slug?: string };
+  const body = req.validated!.body as { name?: string; logo?: string; cover?: string; slug?: string };
   const coffee = await updateMyCoffee(adminCoffeeId(req), body);
   sendSuccess(res, coffee);
 }

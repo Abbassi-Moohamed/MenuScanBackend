@@ -11,6 +11,7 @@ export interface CoffeeWithCategoriesRecord {
   id: string;
   name: string;
   logo: string;
+  cover: string | null;
   slug: string;
   categories: CategoryRecord[];
 }
@@ -34,6 +35,7 @@ export async function findCoffeeWithCategoriesBySlug(slug: string): Promise<Coff
     id: coffee._id.toString(),
     name: coffee.name,
     logo: coffee.logo,
+    cover: coffee.cover ?? null,
     slug: coffee.slug,
     categories: categories.map((category) => ({
       id: category._id.toString(),

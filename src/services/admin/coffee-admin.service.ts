@@ -57,6 +57,7 @@ function coffeeToDto(coffee: {
   id: string;
   name: string;
   logo: string;
+  cover: string | null;
   slug: string;
   categoryCount: number;
   createdAt: Date;
@@ -120,6 +121,7 @@ export async function getMyCoffee(coffeeId: string): Promise<AdminCoffeeDto> {
     id: coffee._id.toString(),
     name: coffee.name,
     logo: coffee.logo,
+    cover: coffee.cover,
     slug: coffee.slug,
     categoryCount: coffee.categoryCount,
     createdAt: coffee.createdAt,
@@ -136,12 +138,17 @@ export async function updateMyCoffee(coffeeId: string, input: CoffeeUpdateInput)
   if (!existing) throw new ApiError(404, "Coffee not found");
 
   const admin: AdminContext = { role: "COFFEE_ADMIN", coffeeId };
-  const patch: Partial<{ name: string; logo: string; slug: string; logoImageId: string | null }> = {};
+  const patch: Partial<{ name: string; logo: string; slug: string; logoImageId: string | null; cover: string | null; coverImageId: string | null }> = {};
   if (input.name !== undefined) patch.name = input.name;
   if (input.logo !== undefined) {
     const resolved = await resolveImageForEntity({ url: input.logo, admin });
     patch.logo = resolved.url;
     patch.logoImageId = resolved.imageId;
+  }
+  if (input.cover !== undefined) {
+    const resolved = await resolveImageForEntity({ url: input.cover, admin });
+    patch.cover = resolved.url;
+    patch.coverImageId = resolved.imageId;
   }
   if (input.slug !== undefined) patch.slug = input.slug;
 
@@ -152,11 +159,16 @@ export async function updateMyCoffee(coffeeId: string, input: CoffeeUpdateInput)
   if (patch.logoImageId !== undefined && existing.logoImageId !== null && existing.logoImageId !== patch.logoImageId) {
     await deleteImage(existing.logoImageId, { coffeeId });
   }
+  if (patch.coverImageId) await attachImageToEntity(patch.coverImageId, coffeeId);
+  if (patch.coverImageId !== undefined && existing.coverImageId !== null && existing.coverImageId !== patch.coverImageId) {
+    await deleteImage(existing.coverImageId, { coffeeId });
+  }
 
   return coffeeToDto({
     id: updated._id.toString(),
     name: updated.name,
     logo: updated.logo,
+    cover: updated.cover,
     slug: updated.slug,
     categoryCount: updated.categoryCount,
     createdAt: updated.createdAt,

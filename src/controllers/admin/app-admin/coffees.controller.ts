@@ -17,8 +17,8 @@ export async function listAdminCoffeesController(_req: Request, res: Response): 
 
 /** POST /api/v1/admin/coffees */
 export async function createAdminCoffeeController(req: Request, res: Response): Promise<void> {
-  const { name, logo, slug } = req.validated!.body as { name: string; logo: string; slug?: string };
-  const coffee = await createCoffee({ name, logo, slug });
+  const { name, logo, cover, slug } = req.validated!.body as { name: string; logo: string; cover?: string; slug?: string };
+  const coffee = await createCoffee({ name, logo, cover, slug });
   sendSuccess(res, coffee, 201);
 }
 
@@ -32,7 +32,7 @@ export async function getAdminCoffeeController(req: Request, res: Response): Pro
 /** PATCH /api/v1/admin/coffees/:coffeeId */
 export async function updateAdminCoffeeController(req: Request, res: Response): Promise<void> {
   const { coffeeId } = req.validated!.params as { coffeeId: string };
-  const body = req.validated!.body as { name?: string; logo?: string; slug?: string };
+  const body = req.validated!.body as { name?: string; logo?: string; cover?: string; slug?: string };
   const coffee = await updateCoffee(coffeeId, body);
   sendSuccess(res, coffee);
 }

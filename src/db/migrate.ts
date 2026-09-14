@@ -7,6 +7,7 @@ import "./migrations/0001_init.js";
 import "./migrations/0002_admin.js";
 import "./migrations/0003_images.js";
 import "./migrations/0004_category_images.js";
+import "./migrations/0005_coffee_cover_images.js";
 import { migrations } from "./migrations/index.js";
 import { logger } from "../utils/logger.js";
 

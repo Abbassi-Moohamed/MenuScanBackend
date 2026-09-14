@@ -512,6 +512,8 @@ describe("MENU SCAN backoffice", () => {
       expect(Object.keys(row).sort()).toEqual([
         "_id",
         "categoryCount",
+        "cover",
+        "coverImageId",
         "createdAt",
         "logo",
         "logoImageId",

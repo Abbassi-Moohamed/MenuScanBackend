@@ -24,6 +24,7 @@ const DEFAULT_COFFEE_PIN = "0000";
 export interface CreateCoffeeInput {
   name: string;
   logo: string;
+  cover?: string;
   slug?: string;
 }
 
@@ -31,6 +32,7 @@ function toDto(coffee: {
   _id: Types.ObjectId;
   name: string;
   logo: string;
+  cover: string | null;
   slug: string;
   categoryCount: number;
   createdAt: Date;
@@ -40,6 +42,7 @@ function toDto(coffee: {
     id: coffee._id.toString(),
     name: coffee.name,
     logo: coffee.logo,
+    cover: coffee.cover,
     slug: coffee.slug,
     categoryCount: coffee.categoryCount,
     createdAt: coffee.createdAt,
@@ -96,17 +99,23 @@ export async function createCoffee(input: CreateCoffeeInput): Promise<AdminCoffe
 
   const admin: AdminContext = { role: "APP_ADMIN" };
   const resolved = await resolveImageForEntity({ url: input.logo, admin });
+  const resolvedCover = input.cover
+    ? await resolveImageForEntity({ url: input.cover, admin })
+    : { url: null, imageId: null };
 
   const adminPinHash = await hashPin(DEFAULT_COFFEE_PIN);
   const coffee = await createAdminCoffee({
     name: input.name,
     logo: resolved.url,
     logoImageId: resolved.imageId,
+    cover: resolvedCover.url,
+    coverImageId: resolvedCover.imageId,
     slug,
     adminPinHash,
   });
 
   await attachImageToEntity(resolved.imageId, coffee._id.toString());
+  await attachImageToEntity(resolvedCover.imageId, coffee._id.toString());
   return toDto(coffee);
 }
 
@@ -119,12 +128,17 @@ export async function updateCoffee(coffeeId: string, input: CoffeeUpdateInput): 
   }
 
   const admin: AdminContext = { role: "APP_ADMIN" };
-  const patch: Partial<{ name: string; logo: string; slug: string; logoImageId: string | null }> = {};
+  const patch: Partial<{ name: string; logo: string; slug: string; logoImageId: string | null; cover: string | null; coverImageId: string | null }> = {};
   if (input.name !== undefined) patch.name = input.name;
   if (input.logo !== undefined) {
     const resolved = await resolveImageForEntity({ url: input.logo, admin });
     patch.logo = resolved.url;
     patch.logoImageId = resolved.imageId;
+  }
+  if (input.cover !== undefined) {
+    const resolved = await resolveImageForEntity({ url: input.cover, admin });
+    patch.cover = resolved.url;
+    patch.coverImageId = resolved.imageId;
   }
   if (input.slug !== undefined) patch.slug = input.slug;
 
@@ -134,6 +148,10 @@ export async function updateCoffee(coffeeId: string, input: CoffeeUpdateInput): 
   if (patch.logoImageId) await attachImageToEntity(patch.logoImageId, coffeeId);
   if (patch.logoImageId !== undefined && existing.logoImageId !== null && existing.logoImageId !== patch.logoImageId) {
     await deleteImage(existing.logoImageId, { coffeeId });
+  }
+  if (patch.coverImageId) await attachImageToEntity(patch.coverImageId, coffeeId);
+  if (patch.coverImageId !== undefined && existing.coverImageId !== null && existing.coverImageId !== patch.coverImageId) {
+    await deleteImage(existing.coverImageId, { coffeeId });
   }
 
   return toDto(updated);

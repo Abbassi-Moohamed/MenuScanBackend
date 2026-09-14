@@ -13,6 +13,7 @@ export interface CoffeeWithCategoriesDto {
   id: string;
   name: string;
   logo: string;
+  cover: string | null;
   slug: string;
   categories: CategoryDto[];
 }
@@ -52,6 +53,7 @@ export interface AdminCoffeeDto {
   id: string;
   name: string;
   logo: string;
+  cover: string | null;
   slug: string;
   categoryCount: number;
   createdAt: Date;
@@ -87,5 +89,6 @@ export interface AdminImageDto {
 export interface CoffeeUpdateInput {
   name?: string;
   logo?: string;
+  cover?: string;
   slug?: string;
 }

@@ -47,12 +47,14 @@ export const pinBodySchema = z.object({
 export const createCoffeeBodySchema = z.object({
   name: z.string().trim().min(1, "Coffee name is required.").max(120, "Coffee name must be at most 120 characters."),
   logo: z.url("logo must be a valid URL."),
+  cover: z.url("cover must be a valid URL.").optional(),
   slug: coffeeSlugSchema.optional(),
 });
 
 const updateCoffeeFields = z.object({
   name: z.string().trim().min(1, "Coffee name is required.").max(120, "Coffee name must be at most 120 characters.").optional(),
   logo: z.url("logo must be a valid URL.").optional(),
+  cover: z.url("cover must be a valid URL.").optional(),
   slug: coffeeSlugSchema.optional(),
 });
 

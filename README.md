@@ -208,6 +208,8 @@ coffees
 | `slug` | string | Required, lowercase slug, max 80, unique |
 | `logo` | string | Required URL in API input |
 | `logoImageId` | string or `null` | Cloudflare R2 object key when managed; absent/null for external URLs |
+| `cover` | string or `null` | Optional public cover image URL |
+| `coverImageId` | string or `null` | Cloudflare R2 object key backing `cover` when managed |
 | `adminPinHash` | string | `select: false`; scrypt hash, never returned |
 | `createdAt`, `updatedAt` | date | Mongoose timestamps |
 
@@ -597,9 +599,9 @@ Every route in this section requires a valid bearer token whose role is
 | Method | Endpoint | Body | Purpose |
 | --- | --- | --- | --- |
 | `GET` | `/api/v1/admin/coffees` | — | List all coffees with `categoryCount` |
-| `POST` | `/api/v1/admin/coffees` | `{ name, logo, slug? }` | Create a coffee; generated/default PIN is `0000` |
+| `POST` | `/api/v1/admin/coffees` | `{ name, logo, cover?, slug? }` | Create a coffee; generated/default PIN is `0000` |
 | `GET` | `/api/v1/admin/coffees/:coffeeId` | — | Get one coffee |
-| `PATCH` | `/api/v1/admin/coffees/:coffeeId` | `{ name?, logo?, slug? }` | Update a coffee |
+| `PATCH` | `/api/v1/admin/coffees/:coffeeId` | `{ name?, logo?, cover?, slug? }` | Update a coffee |
 | `PATCH` | `/api/v1/admin/coffees/:coffeeId/pin` | — | Reset its PIN to `0000` |
 | `DELETE` | `/api/v1/admin/coffees/:coffeeId` | — | Delete coffee and dependent categories/items |
 
@@ -639,7 +641,7 @@ Every route in this section requires a valid bearer token whose role is
 | Method | Endpoint | Body | Purpose |
 | --- | --- | --- | --- |
 | `GET` | `/api/v1/admin/my-coffee` | — | Read the assigned coffee |
-| `PATCH` | `/api/v1/admin/my-coffee` | `{ name?, logo?, slug? }` | Update the assigned coffee |
+| `PATCH` | `/api/v1/admin/my-coffee` | `{ name?, logo?, cover?, slug? }` | Update the assigned coffee |
 | `PATCH` | `/api/v1/admin/my-coffee/pin` | `{ currentPin, newPin }` | Change the assigned coffee PIN |
 | `GET` | `/api/v1/admin/my-coffee/categories` | — | List assigned coffee categories |
 | `POST` | `/api/v1/admin/my-coffee/categories` | `{ name, image? }` | Create a category with an optional image |
@@ -775,7 +777,7 @@ Successful upload:
 }
 ```
 
-The returned URL may be supplied as a coffee `logo` or item `image`. When it
+The returned URL may be supplied as a coffee `logo`, coffee `cover`, or item `image`. When it
 is a managed Cloudflare delivery URL, the backend records the image ID and
 can clean it up when the owning entity is replaced or deleted. If Cloudflare
 is not configured, upload/delete operations that require it return `503`.

@@ -125,6 +125,10 @@ async function isImageStillReferenced(
   for (const coffee of coffees) {
     if (coffee._id.toString() !== exclude?.coffeeId) return true;
   }
+  const coverCoffees = await CoffeeModel.find({ coverImageId: imageId }).select({ _id: 1 }).lean().exec();
+  for (const coffee of coverCoffees) {
+    if (coffee._id.toString() !== exclude?.coffeeId) return true;
+  }
 
   const categories = await ItemCategoryModel.find({ imageId }).select({ _id: 1 }).lean().exec();
   for (const category of categories) {
@@ -141,6 +145,8 @@ async function isImageStillReferenced(
 async function isImageUsedByCoffee(imageId: string, coffeeId: string): Promise<boolean> {
   const coffee = await CoffeeModel.exists({ _id: coffeeId, logoImageId: imageId });
   if (coffee) return true;
+  const cover = await CoffeeModel.exists({ _id: coffeeId, coverImageId: imageId });
+  if (cover) return true;
 
   const categories = await ItemCategoryModel.exists({ imageId, coffeeId });
   if (categories) return true;

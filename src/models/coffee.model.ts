@@ -36,6 +36,16 @@ const coffeeSchema = new Schema(
       trim: true,
       default: null,
     },
+    cover: {
+      type: String,
+      trim: true,
+      default: null,
+    },
+    coverImageId: {
+      type: String,
+      trim: true,
+      default: null,
+    },
     /**
      * scrypt hash of the coffee's 4-digit admin PIN (`scrypt$<salt>$<key>`).
      * Never exposed through any API response; the plain PIN is only ever
