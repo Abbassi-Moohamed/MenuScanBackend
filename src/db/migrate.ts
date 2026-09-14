@@ -5,6 +5,7 @@ import { env } from "../config/env.js";
 import { connectDatabase, disconnectDatabase, mongoose } from "./index.js";
 import "./migrations/0001_init.js";
 import "./migrations/0002_admin.js";
+import "./migrations/0003_images.js";
 import { migrations } from "./migrations/index.js";
 import { logger } from "../utils/logger.js";
 

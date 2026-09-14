@@ -7,6 +7,8 @@ const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   HOST: z.string().min(1).default("0.0.0.0"),
   PORT: z.coerce.number().int().positive().max(65_535).default(4000),
+  /** Maximum in-memory image upload size in megabytes. */
+  IMAGE_UPLOAD_MAX_MB: z.coerce.number().int().min(1).max(100).default(25),
 
   /**
    * MongoDB connection string. This is the single source of truth for the
@@ -34,6 +36,17 @@ const envSchema = z.object({
 
   /** Lifetime of admin tokens, in jsonwebtoken notation (e.g. "12h"). */
   ADMIN_TOKEN_TTL: z.string().min(1).default("12h"),
+
+  /** Cloudflare R2 configuration (server-side only). */
+  CLOUDFLARE_ACCOUNT_ID: z.string().default(""),
+  CLOUDFLARE_R2_ACCESS_KEY_ID: z.string().default(""),
+  CLOUDFLARE_R2_SECRET_ACCESS_KEY: z.string().default(""),
+  CLOUDFLARE_R2_BUCKET_NAME: z
+    .string()
+    .regex(/^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?$/, "CLOUDFLARE_R2_BUCKET_NAME must use lowercase letters, numbers, dots, or hyphens.")
+    .default(""),
+  CLOUDFLARE_R2_ENDPOINT: z.union([z.string().url(), z.literal("")]).default(""),
+  CLOUDFLARE_R2_PUBLIC_URL: z.union([z.string().url(), z.literal("")]).default(""),
 
   LOG_LEVEL: z.string().default("info"),
 });
@@ -67,4 +80,11 @@ export const env = {
   isProduction: data.NODE_ENV === "production",
   isDevelopment: data.NODE_ENV === "development",
   isTest: data.NODE_ENV === "test",
+  cloudflareR2Configured:
+    data.CLOUDFLARE_ACCOUNT_ID.length > 0 &&
+    data.CLOUDFLARE_R2_ACCESS_KEY_ID.length > 0 &&
+    data.CLOUDFLARE_R2_SECRET_ACCESS_KEY.length > 0 &&
+    data.CLOUDFLARE_R2_BUCKET_NAME.length > 0 &&
+    data.CLOUDFLARE_R2_ENDPOINT.length > 0 &&
+    data.CLOUDFLARE_R2_PUBLIC_URL.length > 0,
 } as const;

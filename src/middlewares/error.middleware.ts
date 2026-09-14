@@ -56,6 +56,10 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
     } else if (record?.type === "entity.too.large") {
       statusCode = 413;
       message = "Request body too large";
+    } else if (record?.name === "MulterError") {
+      // multer upload errors (file size/field limits) become clean 4xx codes.
+      statusCode = record.code === "LIMIT_FILE_SIZE" ? 413 : 400;
+      message = record.code === "LIMIT_FILE_SIZE" ? "Image file too large" : "Invalid image upload";
     } else if (typeof record?.status === "number") {
       // body-parser and friends attach a status.
       statusCode = record.status as number;

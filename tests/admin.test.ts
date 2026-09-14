@@ -514,6 +514,7 @@ describe("MENU SCAN backoffice", () => {
         "categoryCount",
         "createdAt",
         "logo",
+        "logoImageId",
         "name",
         "slug",
         "updatedAt",

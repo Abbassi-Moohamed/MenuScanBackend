@@ -14,6 +14,8 @@ export interface AdminItemRow {
   description: string | null;
   price: number;
   image: string | null;
+  /** Cloudflare image id backing `image`, null for external URLs. */
+  imageId: string | null;
   itemCategoryId: Types.ObjectId;
   createdAt: Date;
   updatedAt: Date;
@@ -24,6 +26,7 @@ export interface AdminItemCreateInput {
   description?: string | null;
   price: number;
   image?: string | null;
+  imageId?: string | null;
 }
 
 const SAFE_FIELDS = {
@@ -31,6 +34,7 @@ const SAFE_FIELDS = {
   description: 1,
   price: 1,
   image: 1,
+  imageId: 1,
   itemCategoryId: 1,
   createdAt: 1,
   updatedAt: 1,
@@ -42,6 +46,7 @@ function toRow(item: {
   description?: string | null;
   price: number;
   image?: string | null;
+  imageId?: string | null;
   itemCategoryId: Types.ObjectId;
   createdAt: Date;
   updatedAt: Date;
@@ -52,6 +57,7 @@ function toRow(item: {
     description: item.description ?? null,
     price: item.price,
     image: item.image ?? null,
+    imageId: item.imageId ?? null,
     itemCategoryId: item.itemCategoryId,
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
@@ -79,6 +85,7 @@ export async function createItemForCategory(
     description: item.description ?? null,
     price: item.price,
     image: item.image ?? null,
+    imageId: item.imageId ?? null,
     itemCategoryId: item.itemCategoryId,
     createdAt: item.createdAt,
     updatedAt: item.updatedAt,
@@ -121,6 +128,7 @@ export async function updateItemOwnedByCoffee(
   if (patch.description !== undefined) cleanedPatch.description = patch.description;
   if (patch.price !== undefined) cleanedPatch.price = patch.price;
   if (patch.image !== undefined) cleanedPatch.image = patch.image;
+  if (patch.imageId !== undefined) cleanedPatch.imageId = patch.imageId;
 
   const updated = await ItemModel.findByIdAndUpdate(itemId, cleanedPatch, {
     returnDocument: "after",
@@ -138,4 +146,20 @@ export async function deleteItemOwnedByCoffee(coffeeId: string, itemId: string):
   if (!existing) return false;
   await ItemModel.deleteOne({ _id: existing._id });
   return true;
+}
+
+/** Cloudflare image ids of every item that belongs to the given coffee. */
+export async function listItemImageIdsOfCoffee(coffeeId: string): Promise<string[]> {
+  if (!Types.ObjectId.isValid(coffeeId)) return [];
+  const categories = await ItemCategoryModel.find({ coffeeId }).select({ _id: 1 }).lean().exec();
+  const categoryIds = categories.map((category) => category._id);
+  if (categoryIds.length === 0) return [];
+
+  const items = await ItemModel.find({ itemCategoryId: { $in: categoryIds } })
+    .select({ imageId: 1 })
+    .lean()
+    .exec();
+  return items
+    .map((item) => item.imageId)
+    .filter((imageId): imageId is string => imageId !== null && imageId !== undefined);
 }

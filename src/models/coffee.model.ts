@@ -27,6 +27,16 @@ const coffeeSchema = new Schema(
       trim: true,
     },
     /**
+     * Cloudflare R2 object key backing `logo`, when the logo is hosted on our
+     * Cloudflare account. `null` for external URLs (kept for compatibility).
+     * Never the binary itself.
+     */
+    logoImageId: {
+      type: String,
+      trim: true,
+      default: null,
+    },
+    /**
      * scrypt hash of the coffee's 4-digit admin PIN (`scrypt$<salt>$<key>`).
      * Never exposed through any API response; the plain PIN is only ever
      * known by the person who set it.

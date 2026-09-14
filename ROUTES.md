@@ -129,7 +129,60 @@ On `PATCH`, every field is optional but at least one must be present.
 
 ---
 
-## 6. Status codes
+## 6. Image upload (both admin roles, Cloudflare R2)
+
+| Method | Route | Auth | Description |
+| --- | --- | --- | --- |
+| `POST` | `/api/v1/admin/images` | `APP_ADMIN` / `COFFEE_ADMIN` | Upload an image → `{ "imageId", "url" }` (§6.1) |
+| `DELETE` | `/api/v1/admin/images/:imageId` | `APP_ADMIN` / `COFFEE_ADMIN` | Delete an image (§6.2) |
+
+### 6.1 `POST /api/v1/admin/images`
+
+`multipart/form-data`, field name **`file`**:
+
+```http
+POST /api/v1/admin/images
+Authorization: Bearer <admin-token>
+Content-Type: multipart/form-data
+
+file=@logo.png
+```
+
+- Accepted types: `image/jpeg`, `image/png`, `image/webp`, `image/gif` — validated by declared
+  MIME type **and** magic bytes (content must actually be that image format). The maximum size
+  is configured by `IMAGE_UPLOAD_MAX_MB` (25 MB by default, up to 100 MB).
+- The binary is uploaded to **Cloudflare R2**; MongoDB stores only metadata. No binary is
+  ever written to the database.
+- Returns `201` with only `{ "imageId", "url" }` (the delivery URL) — credentials are never
+  exposed:
+
+```json
+{ "success": true, "data": { "imageId": "uploads/2026-09-14/<uuid>.webp", "url": "https://cdn.example.com/uploads/2026-09-14/<uuid>.webp" } }
+```
+
+The returned `url` can be passed directly as `logo` / `image` when creating/updating coffees,
+categories… items. Assigning a delivery URL records the `imageId` on that row so the image is
+tracked for cleanup.
+
+### 6.2 `DELETE /api/v1/admin/images/:imageId`
+
+```http
+DELETE /api/v1/admin/images/c0ffee-…
+Authorization: Bearer <admin-token>
+```
+
+- Removes the image from Cloudflare and its metadata row.
+- **Ownership**: a `COFFEE_ADMIN` may only delete images uploaded by their own coffee (or still
+  referenced by their own coffee/items). Deleting another coffee's image → `403`. The app admin
+  may delete any image.
+- Images still referenced by one of the blocked coffee's rows are never deleted automatically
+  here — cleanup happens when the referencing item/coffee is removed or replaced.
+- Errors: `400` bad id, `401` no token, `403` not owner, `404` unknown image, `503` Cloudflare
+  not configured / unreachable.
+
+---
+
+## 7. Status codes
 
 | Code | Meaning |
 | --- | --- |
@@ -138,12 +191,14 @@ On `PATCH`, every field is optional but at least one must be present.
 | `400` | Validation failed / malformed body or id |
 | `401` | Unauthorized — missing/invalid/expired token, or wrong PIN |
 | `403` | Forbidden — authenticated with the wrong admin role, or CORS origin denied |
-| `404` | Route / coffee / category / item not found |
+| `404` | Route / coffee / category / item / image not found |
 | `409` | Conflict — slug or category name already taken |
 | `413` | Request body too large |
 | `500` | Internal server error |
+| `502` | Cloudflare R2 request failed (bad gateway) |
+| `503` | Cloudflare R2 not configured / unreachable |
 
-## 7. Validation rules
+## 8. Validation rules
 
 | Field | Rule |
 | --- | --- |

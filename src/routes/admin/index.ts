@@ -2,6 +2,7 @@ import { Router } from "express";
 import { adminAuthRouter } from "./auth.routes.js";
 import { appAdminCoffeesRouter } from "./app-admin.routes.js";
 import { coffeeAdminRouter } from "./coffee-admin.routes.js";
+import { adminImagesRouter } from "./images.routes.js";
 
 /**
  * Backoffice routing, separated by role:
@@ -9,9 +10,11 @@ import { coffeeAdminRouter } from "./coffee-admin.routes.js";
  *   /api/v1/admin/auth/*        → PIN → bearer token (both roles)
  *   /api/v1/admin/coffees/*     → application admin only
  *   /api/v1/admin/my-coffee/*   → coffee admin only (their own coffee)
+ *   /api/v1/admin/images/*      → both roles (ownership checked per image)
  */
 export const adminRouter = Router();
 
 adminRouter.use("/auth", adminAuthRouter);
 adminRouter.use("/coffees", appAdminCoffeesRouter);
 adminRouter.use("/my-coffee", coffeeAdminRouter);
+adminRouter.use("/images", adminImagesRouter);

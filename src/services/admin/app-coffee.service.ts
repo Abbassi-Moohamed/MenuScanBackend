@@ -9,7 +9,9 @@ import {
   updateAdminCoffee,
   updateCoffeePinHash,
 } from "../../repositories/admin/coffee.repository.js";
-import type { AdminCoffeeDto, CoffeeUpdateInput } from "../../types/index.js";
+import { listItemImageIdsOfCoffee } from "../../repositories/admin/item.repository.js";
+import { attachImageToEntity, deleteImage, resolveImageForEntity } from "../image.service.js";
+import type { AdminCoffeeDto, AdminContext, CoffeeUpdateInput } from "../../types/index.js";
 import { ApiError } from "../../utils/ApiError.js";
 
 /**
@@ -91,8 +93,19 @@ export async function createCoffee(input: CreateCoffeeInput): Promise<AdminCoffe
   const slug = input.slug ?? (await generateUniqueSlug(input.name));
   await assertSlugAvailable(slug);
 
+  const admin: AdminContext = { role: "APP_ADMIN" };
+  const resolved = await resolveImageForEntity({ url: input.logo, admin });
+
   const adminPinHash = await hashPin(DEFAULT_COFFEE_PIN);
-  const coffee = await createAdminCoffee({ name: input.name, logo: input.logo, slug, adminPinHash });
+  const coffee = await createAdminCoffee({
+    name: input.name,
+    logo: resolved.url,
+    logoImageId: resolved.imageId,
+    slug,
+    adminPinHash,
+  });
+
+  await attachImageToEntity(resolved.imageId, coffee._id.toString());
   return toDto(coffee);
 }
 
@@ -104,20 +117,45 @@ export async function updateCoffee(coffeeId: string, input: CoffeeUpdateInput): 
     await assertSlugAvailable(input.slug, coffeeId);
   }
 
-  const patch: Partial<{ name: string; logo: string; slug: string }> = {};
+  const admin: AdminContext = { role: "APP_ADMIN" };
+  const patch: Partial<{ name: string; logo: string; slug: string; logoImageId: string | null }> = {};
   if (input.name !== undefined) patch.name = input.name;
-  if (input.logo !== undefined) patch.logo = input.logo;
+  if (input.logo !== undefined) {
+    const resolved = await resolveImageForEntity({ url: input.logo, admin });
+    patch.logo = resolved.url;
+    patch.logoImageId = resolved.imageId;
+  }
   if (input.slug !== undefined) patch.slug = input.slug;
 
   const updated = await updateAdminCoffee(coffeeId, patch);
   if (!updated) throw new ApiError(404, "Coffee not found");
+
+  if (patch.logoImageId) await attachImageToEntity(patch.logoImageId, coffeeId);
+  if (patch.logoImageId !== undefined && existing.logoImageId !== null && existing.logoImageId !== patch.logoImageId) {
+    await deleteImage(existing.logoImageId, { coffeeId });
+  }
+
   return toDto(updated);
 }
 
 /** Deletes the coffee and cascades categories → items (no orphans). */
 export async function deleteCoffee(coffeeId: string): Promise<{ id: string }> {
+  const existing = await findAdminCoffeeById(coffeeId);
+  if (!existing) throw new ApiError(404, "Coffee not found");
+
+  const itemImageIds = await listItemImageIdsOfCoffee(coffeeId);
+
   const deleted = await deleteCoffeeWithDependencies(coffeeId);
   if (!deleted) throw new ApiError(404, "Coffee not found");
+
+  const allImageIds = [
+    ...(existing.logoImageId ? [existing.logoImageId] : []),
+    ...itemImageIds,
+  ];
+  for (const imageId of new Set(allImageIds)) {
+    await deleteImage(imageId, { coffeeId });
+  }
+
   return { id: coffeeId };
 }
 

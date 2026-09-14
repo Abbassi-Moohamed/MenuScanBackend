@@ -32,6 +32,10 @@ export const itemIdParamsSchema = z.object({
   itemId: z.string().regex(MONGODB_ID_PATTERN, MONGODB_ID_MESSAGE),
 });
 
+export const imageIdParamsSchema = z.object({
+  imageId: z.string().trim().min(1, "imageId is required.").max(200, "imageId must be at most 200 characters."),
+});
+
 export const coffeeSlugParamsSchema = z.object({
   coffeeSlug: coffeeSlugSchema,
 });

@@ -16,13 +16,16 @@ import {
 import {
   createItemForCategory,
   deleteItemOwnedByCoffee,
+  findItemOwnedByCoffee,
   listItemsOfCategory,
   updateItemOwnedByCoffee,
 } from "../../repositories/admin/item.repository.js";
+import { attachImageToEntity, deleteImage, resolveImageForEntity } from "../image.service.js";
 import type {
   AdminCategoryDto,
   AdminCoffeeDto,
   AdminItemDto,
+  AdminContext,
   CoffeeUpdateInput,
 } from "../../types/index.js";
 import { ApiError } from "../../utils/ApiError.js";
@@ -46,6 +49,8 @@ export interface UpdateItemInput {
   description?: string;
   price?: number;
   image?: string;
+  /** Cloudflare image id resolved from `image`; never accepted from the client. */
+  imageId?: string | null;
 }
 
 function coffeeToDto(coffee: {
@@ -125,13 +130,27 @@ export async function updateMyCoffee(coffeeId: string, input: CoffeeUpdateInput)
     await assertMySlugAvailable(input.slug, coffeeId);
   }
 
-  const patch: Partial<{ name: string; logo: string; slug: string }> = {};
+  const existing = await findAdminCoffeeById(coffeeId);
+  if (!existing) throw new ApiError(404, "Coffee not found");
+
+  const admin: AdminContext = { role: "COFFEE_ADMIN", coffeeId };
+  const patch: Partial<{ name: string; logo: string; slug: string; logoImageId: string | null }> = {};
   if (input.name !== undefined) patch.name = input.name;
-  if (input.logo !== undefined) patch.logo = input.logo;
+  if (input.logo !== undefined) {
+    const resolved = await resolveImageForEntity({ url: input.logo, admin });
+    patch.logo = resolved.url;
+    patch.logoImageId = resolved.imageId;
+  }
   if (input.slug !== undefined) patch.slug = input.slug;
 
   const updated = await updateAdminCoffee(coffeeId, patch);
   if (!updated) throw new ApiError(404, "Coffee not found");
+
+  if (patch.logoImageId) await attachImageToEntity(patch.logoImageId, coffeeId);
+  if (patch.logoImageId !== undefined && existing.logoImageId !== null && existing.logoImageId !== patch.logoImageId) {
+    await deleteImage(existing.logoImageId, { coffeeId });
+  }
+
   return coffeeToDto({
     id: updated._id.toString(),
     name: updated.name,
@@ -198,8 +217,18 @@ export async function updateCategory(
 
 /** Deletes the category and its items (dependency-order, no orphans). */
 export async function deleteCategory(coffeeId: string, categoryId: string): Promise<{ id: string }> {
+  const category = await findCategoryOwnedByCoffee(coffeeId, categoryId);
+  if (!category) throw new ApiError(404, "Category not found");
+
+  const items = await listItemsOfCategory(categoryId);
   const deleted = await deleteCategoryOwnedByCoffee(coffeeId, categoryId);
   if (!deleted) throw new ApiError(404, "Category not found");
+
+  const imageIds = [...new Set(items.map((item) => item.imageId).filter((id): id is string => Boolean(id)))];
+  for (const imageId of imageIds) {
+    await deleteImage(imageId, { coffeeId });
+  }
+
   return { id: categoryId };
 }
 
@@ -221,12 +250,24 @@ export async function createItem(
   const category = await findCategoryOwnedByCoffee(coffeeId, categoryId);
   if (!category) throw new ApiError(404, "Category not found");
 
+  const admin: AdminContext = { role: "COFFEE_ADMIN", coffeeId };
+  let image: string | null = input.image ?? null;
+  let imageId: string | null = null;
+  if (image !== null) {
+    const resolved = await resolveImageForEntity({ url: image, admin });
+    image = resolved.url;
+    imageId = resolved.imageId;
+  }
+
   const item = await createItemForCategory(categoryId, {
     name: input.name,
     description: input.description ?? null,
     price: input.price,
-    image: input.image ?? null,
+    image,
+    imageId,
   });
+
+  if (imageId) await attachImageToEntity(imageId, coffeeId);
   return itemToDto(item);
 }
 
@@ -235,19 +276,41 @@ export async function updateItem(
   itemId: string,
   input: UpdateItemInput,
 ): Promise<AdminItemDto> {
+  const existing = await findItemOwnedByCoffee(coffeeId, itemId);
+  if (!existing) throw new ApiError(404, "Item not found");
+
+  const admin: AdminContext = { role: "COFFEE_ADMIN", coffeeId };
   const patch: UpdateItemInput = {};
   if (input.name !== undefined) patch.name = input.name;
   if (input.description !== undefined) patch.description = input.description;
   if (input.price !== undefined) patch.price = input.price;
-  if (input.image !== undefined) patch.image = input.image;
+
+  let newImageId: string | null | undefined;
+  if (input.image !== undefined) {
+    const resolved = await resolveImageForEntity({ url: input.image, admin });
+    patch.image = resolved.url;
+    newImageId = resolved.imageId;
+    patch.imageId = resolved.imageId;
+  }
 
   const item = await updateItemOwnedByCoffee(coffeeId, itemId, patch);
   if (!item) throw new ApiError(404, "Item not found");
+
+  if (newImageId) await attachImageToEntity(newImageId, coffeeId);
+  if (input.image !== undefined && existing.imageId !== null && existing.imageId !== newImageId) {
+    await deleteImage(existing.imageId, { coffeeId, itemId });
+  }
+
   return itemToDto(item);
 }
 
 export async function deleteItem(coffeeId: string, itemId: string): Promise<{ id: string }> {
+  const existing = await findItemOwnedByCoffee(coffeeId, itemId);
+  if (!existing) throw new ApiError(404, "Item not found");
+
   const deleted = await deleteItemOwnedByCoffee(coffeeId, itemId);
   if (!deleted) throw new ApiError(404, "Item not found");
+
+  if (existing.imageId) await deleteImage(existing.imageId, { coffeeId, itemId });
   return { id: itemId };
 }

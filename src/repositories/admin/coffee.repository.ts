@@ -9,19 +9,21 @@ import { ItemModel } from "../../models/item.model.js";
  * the repository layer.
  */
 
-const SAFE_FIELDS = { name: 1, slug: 1, logo: 1, createdAt: 1, updatedAt: 1 } as const;
+const SAFE_FIELDS = { name: 1, slug: 1, logo: 1, logoImageId: 1, createdAt: 1, updatedAt: 1 } as const;
 
 export interface AdminCoffeeCreateInput {
   name: string;
   logo: string;
   slug: string;
   adminPinHash: string;
+  logoImageId?: string | null;
 }
 
 export interface AdminCoffeeRow {
   _id: Types.ObjectId;
   name: string;
   logo: string;
+  logoImageId: string | null;
   slug: string;
   createdAt: Date;
   updatedAt: Date;
@@ -37,7 +39,7 @@ export async function findAdminCoffeeById(id: string): Promise<AdminCoffeeRow | 
   const coffee = await CoffeeModel.findById(id).select(SAFE_FIELDS).lean().exec();
   if (!coffee) return null;
   const categoryCount = await ItemCategoryModel.countDocuments({ coffeeId: coffee._id });
-  return { ...coffee, categoryCount };
+  return { ...coffee, logoImageId: coffee.logoImageId ?? null, categoryCount };
 }
 
 export async function listAdminCoffees(): Promise<AdminCoffeeRow[]> {
@@ -50,6 +52,7 @@ export async function listAdminCoffees(): Promise<AdminCoffeeRow[]> {
 
   return coffees.map((coffee) => ({
     ...coffee,
+    logoImageId: coffee.logoImageId ?? null,
     categoryCount: countByCoffeeId.get(coffee._id.toString()) ?? 0,
   }));
 }
@@ -65,6 +68,7 @@ export async function createAdminCoffee(input: AdminCoffeeCreateInput): Promise<
     _id: doc._id,
     name: doc.name,
     logo: doc.logo,
+    logoImageId: doc.logoImageId ?? null,
     slug: doc.slug,
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
@@ -102,7 +106,7 @@ export async function isCoffeeSlugTaken(slug: string, excludeId?: string): Promi
 
 export async function updateAdminCoffee(
   id: string,
-  patch: Partial<{ name: string; logo: string; slug: string }>,
+  patch: Partial<{ name: string; logo: string; slug: string; logoImageId: string | null }>,
 ): Promise<AdminCoffeeRow | null> {
   if (!Types.ObjectId.isValid(id)) return null;
   const coffee = await CoffeeModel.findByIdAndUpdate(id, patch, {
@@ -114,7 +118,7 @@ export async function updateAdminCoffee(
     .exec();
   if (!coffee) return null;
   const categoryCount = await ItemCategoryModel.countDocuments({ coffeeId: coffee._id });
-  return { ...coffee, categoryCount };
+  return { ...coffee, logoImageId: coffee.logoImageId ?? null, categoryCount };
 }
 
 export async function updateCoffeePinHash(id: string, adminPinHash: string): Promise<boolean> {

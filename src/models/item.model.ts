@@ -24,6 +24,16 @@ const itemSchema = new Schema(
       trim: true,
       default: null,
     },
+    /**
+     * Cloudflare R2 object key backing `image`, when the image is hosted on our
+     * Cloudflare account. `null` for external URLs (kept for compatibility).
+     * Never the binary itself.
+     */
+    imageId: {
+      type: String,
+      trim: true,
+      default: null,
+    },
     itemCategoryId: {
       type: Schema.Types.ObjectId,
       ref: "ItemCategory",

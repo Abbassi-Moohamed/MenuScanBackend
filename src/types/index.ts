@@ -75,6 +75,12 @@ export interface AdminItemDto {
   updatedAt: Date;
 }
 
+/** An image uploaded to Cloudflare R2. Only metadata is returned/stored. */
+export interface AdminImageDto {
+  imageId: string;
+  url: string;
+}
+
 /** Request body shape shared by the app-admin and coffee-admin coffee edits. */
 export interface CoffeeUpdateInput {
   name?: string;

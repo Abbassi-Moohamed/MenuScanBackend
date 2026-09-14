@@ -1,541 +1,1045 @@
-# MENU SCAN — Backend API
+# MENU SCAN Backend
 
-Production-ready REST API for **MENU SCAN**, a QR-based digital menu platform that serves
-many independent coffee shops. Each coffee exposes its own public menu
-(`https://menuscan.vercel.app/:coffeeSlug`) backed by this API.
+MENU SCAN is a multi-coffee-shop digital menu platform. A customer scans a
+coffee shop's QR code, the Next.js frontend resolves the shop's public slug,
+and this Express API returns the menu data stored in MongoDB. Coffee-shop
+operators manage their own menu from the backoffice, while an application
+administrator manages all coffee shops.
 
-```text
-Coffee (1) ──── (N) ItemCategory (1) ──── (N) Item
+This document is the implementation reference for the backend. It describes
+the routes, data model, authorization boundaries, local workflow, and
+extension points that exist in this repository.
+
+## Contents
+
+- [Architecture](#architecture)
+- [Technology stack](#technology-stack)
+- [Project structure](#project-structure)
+- [Request lifecycle](#request-lifecycle)
+- [Database](#database)
+- [Running locally](#running-locally)
+- [Environment configuration](#environment-configuration)
+- [Seed data and migrations](#seed-data-and-migrations)
+- [API conventions](#api-conventions)
+- [Public menu API](#public-menu-api)
+- [Admin API](#admin-api)
+- [PIN security and authorization](#pin-security-and-authorization)
+- [Images](#images)
+- [Errors](#errors)
+- [Security posture and known limitations](#security-posture-and-known-limitations)
+- [Testing](#testing)
+- [Deployment](#deployment)
+- [Development guidelines](#development-guidelines)
+- [Architecture decisions](#architecture-decisions)
+- [Quick reference](#quick-reference)
+
+## Architecture
+
+```mermaid
+flowchart TD
+    QR[Coffee shop QR code] --> WEB[Next.js frontend]
+    WEB --> API[Express.js API]
+    API --> DB[(MongoDB)]
+    API -. optional image upload .-> CF[Cloudflare R2]
 ```
 
-- **Node.js 22 (LTS)** · **Express 5** · **TypeScript** (strict) · **MongoDB** · **Mongoose 9**
-- **Zod** request validation · centralized error handling · strict CORS · helmet security headers
-- Versioned public API (`/api/v1/...`) · health endpoints · versioned DB migrations · dev seed · test suite
+The QR code identifies a coffee shop, normally by a public slug such as
+`cafe-el-manzah`. The QR code does not contain private credentials. The
+frontend calls the public API and renders the returned menu.
 
----
+There are two backoffice experiences:
 
-## Requirements
+```text
+Application administrator
+    └── all coffees
 
-- Node.js 22 LTS (pinned in `package.json` `engines`; matched with `@types/node@22`)
-- A MongoDB server (local or Atlas). Anything on `mongodb://`/`mongodb+srv://` works — the
-  connection is fully driven by `DATABASE_URL`.
+Coffee administrator
+    └── one assigned coffee
+        ├── coffee profile
+        ├── categories
+        └── items
+```
 
-## Stack notes
+The menu hierarchy is:
 
-| Concern | Choice | Why |
+```text
+Coffee
+└── ItemCategory
+    └── Item
+```
+
+The backend is intentionally split into an application factory (`src/app.ts`)
+and a process entry point (`src/server.ts`). The factory is side-effect free
+and is used by the test suite; the server entry point connects to MongoDB,
+starts listening, and performs graceful shutdown.
+
+## Technology stack
+
+| Technology | Version/source | Role |
 | --- | --- | --- |
-| HTTP | Express 5 | Latest stable major; async handler errors are forwarded to the error middleware natively. |
-| Language | TypeScript 7 (strict, `NodeNext` ESM) | Modern config; ESM throughout including the build output. |
-| Database | MongoDB via Mongoose 9 | Prisma 7 dropped MongoDB support; Prisma 6 requires replica sets for nested writes. Mongoose is the production-grade MongoDB ODM. |
-| Validation | Zod 4 | Shared request schemas; malformed requests never reach the database. |
-| Logging | pino + pino-http | Structured JSON in production, pretty in dev, per-request ids. |
+| Node.js | `22.x` | Runtime |
+| TypeScript | `^7.0.2` | Static typing and compilation |
+| Express | `^5.2.1` | HTTP server and middleware pipeline |
+| MongoDB | Server/runtime dependency | Document database |
+| Mongoose | `^9.10.0` | Models, queries, document validation |
+| Zod | `^4.6.3` | Request and environment validation |
+| JSON Web Token | `jsonwebtoken ^9.0.3` | Short-lived admin bearer tokens |
+| Node `crypto.scrypt` | Built into Node.js | One-way hashing of coffee PINs |
+| Helmet | `^8.3.0` | Security-related HTTP headers |
+| CORS | `^2.8.6` | Frontend-origin restrictions |
+| Multer | `^2.3.0` | In-memory multipart image uploads |
+| Pino / pino-http | `^10.3.1` / `^11.0.0` | Structured application/request logging |
+| Vitest | `^5.0.0` | Test runner |
+| Supertest | `^7.2.2` | HTTP-level API tests |
+| mongodb-memory-server | `^11.2.0` | Isolated MongoDB test server |
+| Cloudflare R2 | External optional service | Image binary storage and delivery |
 
----
+The package is ESM (`"type": "module"`). Compiled output is written to
+`dist/`.
 
 ## Project structure
 
 ```text
-src/
-├── config/          # Environment (Zod-validated) + CORS policy
-├── auth/            # PIN hashing (node:crypto scrypt) + admin JWT issue/verify
-├── controllers/     # Thin HTTP layer: parse req, call service, respond
-├── routes/          # Centralized mounting: /api/v1/... (+ admin sub-routers)
-├── services/        # Business logic, not-found semantics, DTO shaping
-├── repositories/    # All MongoDB queries live here (isolated from HTTP)
-├── models/          # Mongoose schemas: Coffee, ItemCategory, Item
-├── middlewares/     # Validation, auth (requireAdmin/*), error handler, 404
-├── validators/      # Zod schemas per resource (public + admin)
-├── types/           # Public/admin DTOs + Express request augmentation
-├── utils/           # ApiError, logger, response envelope helpers
-├── db/              # Connection, migration runner + migrations, seed
-├── app.ts           # Express app factory (no I/O — fully testable)
-└── server.ts        # Entry point: connect DB, listen, graceful shutdown
-tests/               # Vitest + supertest integration suite (in-memory MongoDB)
+.
+├── src/
+│   ├── app.ts
+│   ├── server.ts
+│   ├── auth/
+│   ├── config/
+│   ├── controllers/
+│   ├── db/
+│   │   ├── migrations/
+│   │   ├── migrate.ts
+│   │   └── seed.ts
+│   ├── middlewares/
+│   ├── models/
+│   ├── repositories/
+│   ├── routes/
+│   ├── services/
+│   ├── types/
+│   ├── utils/
+│   └── validators/
+├── tests/
+├── .env.example
+├── package.json
+├── ROUTES.md
+├── tsconfig.json
+├── tsconfig.build.json
+└── vitest.config.ts
 ```
 
-Dependency flow is one-way and never reversed:
+| Directory/file | Responsibility | Keep out of it |
+| --- | --- | --- |
+| `src/app.ts` | Composes Express middleware and routers without opening sockets or databases. | Business logic and process startup |
+| `src/server.ts` | Connects to MongoDB, starts the HTTP listener, and handles shutdown. | Route definitions |
+| `src/config/` | Parses environment variables and builds CORS configuration. | Request-specific state |
+| `src/routes/` | Maps HTTP methods/paths to middleware and controllers. | Database queries and business rules |
+| `src/controllers/` | Reads validated request data, calls services, and serializes success responses. | Authorization policy or raw MongoDB access |
+| `src/services/` | Business rules, ownership checks, orchestration, and DTO construction. | Express route registration |
+| `src/repositories/` | Mongoose data access and ownership-scoped queries. | HTTP status handling |
+| `src/models/` | Mongoose schemas, collection names, indexes, and model types. | Controller behavior |
+| `src/middlewares/` | Validation, authentication, uploads, 404 handling, and centralized errors. | Entity-specific business operations |
+| `src/validators/` | Zod schemas for params and JSON bodies. | Persistence |
+| `src/auth/` | PIN hashing/comparison and JWT issue/verification. | Route-specific CRUD |
+| `src/db/` | Connection helpers, ordered migrations, and development seed data. | Runtime request handling |
+| `src/types/` | API DTOs and shared request/auth types. | Mongoose schema definitions |
+| `src/utils/` | Shared errors, response envelopes, and logging. | Domain-specific workflows |
+| `tests/` | API, admin authorization, and image behavior tests. | Production code |
+
+`ROUTES.md` is a compact route list. This README is the authoritative
+high-level architecture and integration guide.
+
+## Request lifecycle
 
 ```text
-Routes → Controllers → Services → Repositories → Mongoose models → MongoDB
+HTTP request
+    ↓
+Express app middleware
+    ├── Helmet
+    ├── CORS
+    ├── JSON parser (10 KB limit)
+    └── Pino request logger
+    ↓
+Versioned route
+    ↓
+Zod validation (where the route has input)
+    ↓
+Bearer authentication and role middleware (admin routes)
+    ↓
+Controller
+    ↓
+Service
+    ↓
+Repository / Mongoose model
+    ↓
+MongoDB
+    ↓
+{ success: true, data: ... }
 ```
 
----
+- **Validation** occurs in `validate.middleware.ts` before controller logic.
+- **Authentication** verifies the `Authorization: Bearer <token>` header.
+- **Authorization** checks `APP_ADMIN` or `COFFEE_ADMIN` and, for coffee
+  admins, the coffee ID embedded in the verified token.
+- **Business logic** belongs in services.
+- **Database access** belongs in repositories or migration/seed code.
+- **Errors** flow to the final centralized error middleware and are returned
+  in a consistent envelope.
 
-## Installation & configuration
+This separation keeps HTTP behavior testable and prevents controllers from
+quietly bypassing tenant ownership rules.
+
+## Database
+
+### Collections and relationships
+
+```text
+coffees
+  └── itemcategories.coffeeId
+        └── items.itemCategoryId
+```
+
+#### `coffees`
+
+| Field | Type | Rules |
+| --- | --- | --- |
+| `_id` | `ObjectId` | MongoDB identifier |
+| `name` | string | Required, trimmed, max 120 characters |
+| `slug` | string | Required, lowercase slug, max 80, unique |
+| `logo` | string | Required URL in API input |
+| `logoImageId` | string or `null` | Cloudflare R2 object key when managed; absent/null for external URLs |
+| `adminPinHash` | string | `select: false`; scrypt hash, never returned |
+| `createdAt`, `updatedAt` | date | Mongoose timestamps |
+
+#### `itemcategories`
+
+| Field | Type | Rules |
+| --- | --- | --- |
+| `_id` | `ObjectId` | MongoDB identifier |
+| `name` | string | Required, trimmed, max 80 characters |
+| `coffeeId` | `ObjectId` | Required reference to `coffees._id` |
+| `createdAt`, `updatedAt` | date | Mongoose timestamps |
+
+Categories are unique by `(coffeeId, name)`, not globally. Two coffees can
+both have a category named `Cafés`.
+
+#### `items`
+
+| Field | Type | Rules |
+| --- | --- | --- |
+| `_id` | `ObjectId` | MongoDB identifier |
+| `name` | string | Required, trimmed, max 120 characters |
+| `description` | string or `null` | Optional, max 500 characters |
+| `price` | number | Required, finite, zero or greater |
+| `image` | string or `null` | Optional URL |
+| `imageId` | string or `null` | Cloudflare R2 object key when managed |
+| `itemCategoryId` | `ObjectId` | Required reference to `itemcategories._id` |
+| `createdAt`, `updatedAt` | date | Mongoose timestamps |
+
+#### `images`
+
+The optional image integration stores metadata only:
+
+| Field | Type | Rules |
+| --- | --- | --- |
+| `imageId` | string | Required and unique Cloudflare ID |
+| `url` | string | Required public delivery URL |
+| `filename` | string or `null` | Sanitized original filename |
+| `alt` | string or `null` | Optional metadata field |
+| `ownerType` | `COFFEE` or `APP` | Ownership boundary |
+| `coffeeId` | `ObjectId` or `null` | Owning coffee for coffee-owned images |
+| `uploadedByRole` | `APP_ADMIN` or `COFFEE_ADMIN` | Uploading role |
+
+No image binary is stored in MongoDB or on the local filesystem.
+
+### Indexes and constraints
+
+- `coffees.slug`: unique index (`uq_coffees_slug`).
+- `itemcategories.(coffeeId, name)`: unique compound index
+  (`uq_itemcategories_coffee_name`).
+- `itemcategories.coffeeId`: lookup index.
+- `items.itemCategoryId`: lookup index.
+- `images.imageId`: unique index.
+- `images.coffeeId`: lookup index.
+
+Mongoose schema validation and MongoDB `$jsonSchema` validators both protect
+the data. Indexes are managed by migrations; the runtime connection disables
+Mongoose `autoIndex`.
+
+### Ownership resolution
+
+An item does not store `coffeeId` directly. The service resolves ownership by
+walking the relationship:
+
+```text
+Item
+ ↓ itemCategoryId
+ItemCategory
+ ↓ coffeeId
+Coffee
+```
+
+Coffee-admin repository methods include the authenticated coffee ID in their
+queries or verify it through this chain. A valid item ID alone is never enough
+to edit another coffee's item.
+
+### Deletion behavior
+
+- Deleting a coffee deletes its items, categories, and coffee document in
+  dependency order. Managed Cloudflare images are also cleaned up.
+- Deleting a category deletes its items and their managed images.
+- Deleting an item deletes its managed image.
+- Replacing a managed logo or item image cleans up the previous managed image.
+- External URLs are retained as URLs and are not sent to Cloudflare for
+  deletion.
+
+These are application-level cascades; MongoDB foreign-key cascades are not
+used.
+
+## Running locally
+
+### Prerequisites
+
+- Node.js 22.x
+- npm
+- A reachable MongoDB instance, local or hosted
+
+### Install and configure
 
 ```bash
+git clone <repository-url>
+cd backend
 npm install
-cp .env.example .env   # then edit values (see below)
+copy .env.example .env
 ```
 
-### `.env` variables
+On macOS/Linux, use `cp .env.example .env` instead of `copy`.
 
-| Variable | Required | Default | Description |
-| --- | --- | --- | --- |
-| `NODE_ENV` | — | `development` | `development` \| `test` \| `production` |
-| `HOST` | — | `0.0.0.0` | Interface the API binds to |
-| `PORT` | — | `4000` | Listening port |
-| `DATABASE_URL` | yes (prod) | `mongodb://127.0.0.1:27017/menuscan` | MongoDB connection string. Local: `mongodb://127.0.0.1:27017/menuscan`. Atlas: `mongodb+srv://USER:PASSWORD@host/menuscan?retryWrites=true&w=majority` |
-| `FRONTEND_URL` | — | `http://localhost:3000` | Primary CORS origin (the Next.js app) |
-| `CORS_ORIGINS` | — | _(empty)_ | Extra allowed origins, comma-separated (e.g. `https://menuscan.vercel.app`) |
-| `LOG_LEVEL` | — | `info` | pino level: `trace` \| `debug` \| `info` \| `warn` \| `error` \| `silent` |
-| `APP_ADMIN_PIN` | — | `3219` | Static 4-digit PIN for the MENU SCAN **application admin** (MVP gate, not real auth) |
-| `ADMIN_SECRET` | yes (prod) | dev value | Secret signing the short-lived admin bearer tokens (HS256). The dev default is **refused** when `NODE_ENV=production`. |
-| `ADMIN_TOKEN_TTL` | — | `12h` | Admin token lifetime in jsonwebtoken notation (`12h`, `1d`, …) |
+Edit `.env` with a local MongoDB URL and a frontend origin. The checked-in
+`.env.example` contains safe development placeholders; never commit a real
+`.env`.
 
-> `cors` options: `"*"` is only honored in `development`/`test`; the app refuses to boot with
-> `NODE_ENV=production` and a wildcard CORS origin. Production requires explicit origins.
-
-### Deploying (Render / Node hosts)
-
-- The build needs the devDependencies (they contain TypeScript itself and `@types/node`).
-  Render and similar hosts set `NODE_ENV=production` during builds, which makes `npm install`
-  / `npm ci` skip devDependencies. The included `.npmrc` (`include=dev`) overrides that.
-  Recommended Render **build command**: `npm ci && npm run build`.
-  Start command: `npm start` → `node dist/server.js`.
-- Node is pinned to `22.x` (LTS) in `engines`; Render resolves it from `package.json` and does
-  not need the version set manually.
-- Set these in the host's environment (never in git): `DATABASE_URL` (must include the
-  database name), `ADMIN_SECRET` (≥ 16 chars — required in production), `APP_ADMIN_PIN`,
-  `FRONTEND_URL`, optional `CORS_ORIGINS`.
-- If the host has no health-check config yet, point it at `/health` (liveness) or
-  `/health/ready` (includes a MongoDB readiness check).
-
-### Database
+### Initialize the database
 
 ```bash
-# 1. Apply migrations (creates collections, $jsonSchema validators, indexes,
-#    and records the run in the changelog collection `_migrations`)
 npm run db:migrate
-
-# 2. Seed realistic multi-coffee demo data (destructive: wipes + resets)
 npm run db:seed
 ```
 
-The seed creates 3 coffees — **Café El Manzah**, **Brew & Beans**, **Coffee Leaf** — each with
-its own distinct categories and items. Same-named categories (e.g. `Cafés` under both
-Café El Manzah and Brew & Beans) are included on purpose to prove data isolation works.
-Every seeded coffee uses the default coffee-admin PIN **`0000`** (stored as an scrypt hash).
+`db:migrate` is idempotent. It records applied migrations in the `_migrations`
+collection and runs each migration once. `db:seed` is intentionally
+destructive: it removes existing coffees, categories, and items before
+recreating the development dataset.
 
-### Running
-
-```bash
-npm run dev        # tsx watch, hot reload
-npm run build      # compile to dist/ (tsc, strict)
-npm start          # run the production build
-```
-
-### Quality gates
+### Start the API
 
 ```bash
-npm run typecheck  # tsc --noEmit (strict)
-npm test           # Vitest integration suite — runs against an in-memory MongoDB
-npm run check      # typecheck + tests
+npm run dev
 ```
 
----
+The default local server is `http://localhost:4000`.
 
-## API
+Useful checks:
 
-Base URL (local): `http://localhost:4000`
-
-> **Quick reference:** the full route map (every endpoint, auth requirement, example and
-> validation rule) lives in [`ROUTES.md`](./ROUTES.md).
-
-All public responses are wrapped in an envelope:
-
-```json
-{ "success": true, "data": { ... } }
+```bash
+curl http://localhost:4000/
+curl http://localhost:4000/health
+curl http://localhost:4000/health/ready
+curl http://localhost:4000/api/v1/coffees/cafe-el-manzah
 ```
 
-All errors share a consistent shape and HTTP status:
+### Production build
 
-```json
-{ "success": false, "message": "Coffee not found" }
+```bash
+npm run typecheck
+npm run build
+npm start
 ```
 
-Validation failures additionally include a `details` array:
+`npm start` runs `dist/server.js`; the production process still needs the
+environment variables described below and a reachable MongoDB database.
+
+## Environment configuration
+
+`.env.example` is the template for all supported variables.
+
+| Variable | Required | Description |
+| --- | --- | --- |
+| `NODE_ENV` | No | `development`, `test`, or `production`; defaults to `development` |
+| `HOST` | No | Bind host; defaults to `0.0.0.0` |
+| `PORT` | No | Positive TCP port; defaults to `4000` |
+| `DATABASE_URL` | Yes in practice | MongoDB connection string; local default is `mongodb://127.0.0.1:27017/menuscan` |
+| `FRONTEND_URL` | No | Primary allowed Next.js origin; defaults to `http://localhost:3000` |
+| `CORS_ORIGINS` | No | Comma-separated additional origins; `*` is rejected in production |
+| `LOG_LEVEL` | No | Pino level such as `info`, `warn`, or `silent` |
+| `APP_ADMIN_PIN` | No | Exactly four digits for app-admin login; development default is `3219` |
+| `ADMIN_SECRET` | Yes in production | HS256 signing secret, minimum 16 characters; the development default is rejected in production |
+| `ADMIN_TOKEN_TTL` | No | JWT lifetime, for example `12h` or `1d`; defaults to `12h` |
+| `CLOUDFLARE_ACCOUNT_ID` | Only for image uploads | Cloudflare account ID |
+| `CLOUDFLARE_R2_ACCESS_KEY_ID` | Only for image uploads | Server-side R2 access key |
+| `CLOUDFLARE_R2_SECRET_ACCESS_KEY` | Only for image uploads | Server-side R2 secret |
+| `CLOUDFLARE_R2_BUCKET_NAME` | Only for image uploads | R2 bucket name |
+| `CLOUDFLARE_R2_ENDPOINT` | Only for image uploads | Account-specific R2 S3 endpoint |
+| `CLOUDFLARE_R2_PUBLIC_URL` | Needed for delivery URLs | Public custom domain or public bucket URL |
+
+The application validates environment variables at startup and exits before
+listening if configuration is invalid. Cloudflare variables are optional:
+without them, image upload endpoints return `503`.
+
+## Seed data and migrations
+
+The seed creates three intentionally different coffees:
+
+- `cafe-el-manzah`
+- `brew-and-beans`
+- `coffee-leaf`
+
+Each coffee receives its own categories and items. Some category names are
+intentionally repeated across coffees to exercise tenant isolation. Seeded
+coffee-admin PINs are hashed from the development PIN `0000`.
+
+Do not run the seed against a production database. It deletes the menu data
+before recreating it.
+
+Migrations are ordered in `src/db/migrations/` and tracked in `_migrations`.
+Never rename or reorder an already-applied migration. Add a new migration at
+the end of the migration list and keep destructive rollback behavior explicit.
+
+## API conventions
+
+### Base URL and versioning
+
+Local base URL:
+
+```text
+http://localhost:4000
+```
+
+All application endpoints are under `/api/v1`. System endpoints are mounted
+at `/` and `/health`.
+
+### Success envelope
 
 ```json
 {
-  "success": false,
-  "message": "Validation failed",
-  "details": [{ "field": "params.coffeeSlug", "message": "Slug must be lowercase, ..." }]
+  "success": true,
+  "data": {}
 }
 ```
 
-Status codes used: `200 OK`, `201 Created`, `400 Bad Request`, `401 Unauthorized`,
-`403 Forbidden`, `404 Not Found`, `409 Conflict`, `413 Payload Too Large`, `500 Internal Server Error`.
+Create operations return `201`; ordinary successful reads and updates return
+`200`.
 
----
+### Authentication header
 
-### `GET /`
+Admin endpoints use:
 
-API overview — what this server is and where its endpoints live. Handy when opening the
-API root (`http://localhost:4000/`) in a browser.
+```http
+Authorization: Bearer <jwt>
+```
+
+Tokens are returned by the admin login endpoints and are not stored in a
+server-side session.
+
+### IDs and validation
+
+- MongoDB IDs must be 24-character hexadecimal ObjectIds.
+- Coffee slugs are lowercase and match `[a-z0-9]+(?:-[a-z0-9]+)*`.
+- PINs are exactly four decimal digits.
+- PATCH bodies must contain at least one editable field.
+- URL fields are validated as URLs.
+- JSON request bodies are limited to 10 KB.
+
+## Public menu API
+
+Public routes require no authentication. They are designed for the QR menu
+flow.
+
+### Resolve a coffee by slug
+
+```http
+GET /api/v1/coffees/:coffeeSlug
+```
+
+Returns one coffee and only its categories. Categories are sorted by name.
+
+Example:
+
+```bash
+curl http://localhost:4000/api/v1/coffees/cafe-el-manzah
+```
+
+Response:
 
 ```json
 {
   "success": true,
   "data": {
-    "name": "MENU SCAN API",
-    "apiVersion": "v1",
-    "endpoints": {
-      "health": "/health",
-      "readiness": "/health/ready",
-      "coffeeBySlug": "/api/v1/coffees/:coffeeSlug",
-      "itemsByCategory": "/api/v1/categories/:categoryId/items"
-    }
-  }
-}
-```
-
----
-
-### `GET /health`
-
-Liveness probe (process is up). Useful for load balancers.
-
-```http
-GET /health
-```
-
-```json
-{ "status": "ok" }
-```
-
-### `GET /health/ready`
-
-Readiness probe — verifies the database connection.
-
-```http
-GET /health/ready
-```
-
-```json
-{ "status": "ok", "database": "up" }
-```
-
-Returns `503` with `{ "status": "error", "database": "down" }` when MongoDB is unreachable.
-
----
-
-### `GET /api/v1/coffees/:coffeeSlug`
-
-Resolves a coffee by its URL-safe **slug** and returns the coffee with **only its own**
-categories. This is the endpoint the frontend calls after extracting `coffeeSlug`
-from `https://menuscan.vercel.app/:coffeeSlug`.
-
-**Validation rules for `coffeeSlug`:** lowercase, 1–80 chars, letters/digits with optional
-dashes between segments (`cafe-el-manzah`). Matching is case-insensitive (the slug is
-normalized to lowercase before the query).
-
-```http
-GET /api/v1/coffees/cafe-el-manzah
-```
-
-```json
-{
-  "success": true,
-  "data": {
-    "id": "6aa5df5707f936c6faa35ca5",
+    "id": "64f000000000000000000001",
     "name": "Café El Manzah",
-    "logo": "https://picsum.photos/seed/manzah-logo/400/400",
+    "logo": "https://example.com/logo.png",
     "slug": "cafe-el-manzah",
     "categories": [
-      { "id": "6aa5df5807f936c6faa35caa", "name": "Boissons chaudes" },
-      { "id": "6aa5df5707f936c6faa35ca6", "name": "Cafés" },
-      { "id": "6aa5df5807f936c6faa35cb0", "name": "Desserts" },
-      { "id": "6aa5df5807f936c6faa35cad", "name": "Jus" },
-      { "id": "6aa5df5807f936c6faa35cb3", "name": "Petit-déjeuner" }
+      {
+        "id": "64f000000000000000000010",
+        "name": "Cafés"
+      }
     ]
   }
 }
 ```
 
-Errors:
+Errors include `400` for an invalid slug and `404` for an unknown coffee.
 
-- `404` `Coffee not found` — the slug doesn't exist
-- `400` `Validation failed` — malformed slug
-
----
-
-### `GET /api/v1/categories/:categoryId/items`
-
-Returns the items of **one specific category only**. This is the endpoint the frontend
-calls when a category bubble is tapped, using the `ItemCategory.id` from the coffee payload.
-
-**Validation rules for `categoryId`:** 24-character hex MongoDB ObjectId.
+### List items in a category
 
 ```http
-GET /api/v1/categories/6aa5df5707f936c6faa35ca6/items
+GET /api/v1/categories/:categoryId/items
 ```
+
+Returns only the items whose `itemCategoryId` is the requested category.
+Items are sorted by name.
+
+```bash
+curl http://localhost:4000/api/v1/categories/64f000000000000000000010/items
+```
+
+Response:
 
 ```json
 {
   "success": true,
   "data": [
     {
-      "id": "6aa5df5807f936c6faa35ca7",
-      "name": "Café Crème",
-      "description": "Espresso allongé avec un nuage de crème",
-      "price": 3.0,
-      "image": "https://picsum.photos/seed/manzah-creme/400/300"
-    },
-    {
-      "id": "6aa5df5807f936c6faa35ca8",
-      "name": "Cappuccino",
-      "description": "Espresso, lait vapeur et mousse soyeuse",
-      "price": 4.0,
-      "image": "https://picsum.photos/seed/manzah-cappuccino/400/300"
+      "id": "64f000000000000000000020",
+      "name": "Espresso",
+      "description": "Café espresso traditionnel",
+      "price": 2.5,
+      "image": "https://example.com/espresso.jpg"
     }
   ]
 }
 ```
 
-Items are sorted by name; `description` and `image` are `null` when absent; `price` is a number.
+Errors include `400` for an invalid ObjectId and `404` when the category does
+not exist.
 
-Errors:
+## Admin API
 
-- `404` `Category not found` — the id doesn't exist
-- `400` `Validation failed` — malformed id
+Admin routes are mounted under `/api/v1/admin`.
 
----
+### Authentication
 
-## Backoffice (admin APIs)
-
-MENU SCAN has a lightweight backoffice with two administrator levels. **There is no full
-authentication system** — the MVP uses a 4-digit PIN gate that issues a **short-lived signed
-bearer token**. This is a gate, not authentication; replace it before production.
-
-```text
-MENU SCAN App Admin       → manages ALL coffees (create / view / update / delete / reset PINs)
-Coffee Admin (own coffee) → manages ONLY their coffee's info, categories and items
-```
-
-### PIN rules
-
-- **App admin PIN** is static and configured via `APP_ADMIN_PIN` (default `3219`). It is
-  compared in constant time; it is never stored.
-- **Coffee PIN** belongs to a single coffee. Every new coffee starts at `0000`.
-- Coffee PINs are stored as **one-way scrypt hashes** (`node:crypto`, per-value salt) in
-  `Coffee.adminPinHash`. The plain PIN or the hash are **never** returned by any endpoint.
-- A coffee admin can change their own PIN (`PATCH /api/v1/admin/my-coffee/pin`); the app admin
-  can reset any coffee back to `0000` (`PATCH /api/v1/admin/coffees/:coffeeId/pin`).
-- All PINs are validated as **exactly 4 decimal digits**.
-
-### Authorization model
-
-1. `POST /api/v1/admin/auth/app` — verify the app-admin PIN → `APP_ADMIN` token.
-2. `POST /api/v1/admin/auth/coffee/:coffeeSlug` — verify that coffee's PIN → `COFFEE_ADMIN`
-   token carrying the owned `coffeeId`.
-3. Protected routes read `Authorization: Bearer <token>`; the token expires after
-   `ADMIN_TOKEN_TTL`.
-4. **Ownership is enforced server-side.** A coffee admin can only ever touch rows whose
-   `item → itemCategory → coffee` chain resolves to their own `coffeeId`. Supplying another
-   coffee's ObjectId returns `404`, never an extra admin surface. A `coffeeId` from the
-   frontend/body is never trusted — the target's real ownership is re-validated on every query.
-5. Role boundaries: coffee-admin tokens are rejected (`403`) on app-admin routes and vice-versa.
-
-### Auth endpoints
-
-#### `POST /api/v1/admin/auth/app`
+#### Application admin login
 
 ```http
 POST /api/v1/admin/auth/app
 Content-Type: application/json
-
-{ "pin": "3219" }
 ```
+
+Body:
+
+```json
+{ "pin": "<APP_ADMIN_PIN>" }
+```
+
+Success:
 
 ```json
 {
   "success": true,
   "data": {
-    "token": "eyJhbGciOiJIUzI1NiIs...",
+    "token": "<jwt>",
     "role": "APP_ADMIN",
     "expiresIn": "12h"
   }
 }
 ```
 
-#### `POST /api/v1/admin/auth/coffee/:coffeeSlug`
+The PIN is compared against `APP_ADMIN_PIN` using a constant-time comparison.
+Wrong or malformed PINs return `401`.
+
+#### Coffee admin login
 
 ```http
-POST /api/v1/admin/auth/coffee/cafe-el-manzah
+POST /api/v1/admin/auth/coffee/:coffeeSlug
 Content-Type: application/json
+```
 
+Body:
+
+```json
 { "pin": "0000" }
 ```
+
+Success:
 
 ```json
 {
   "success": true,
   "data": {
-    "token": "eyJhbGciOiJIUzI1NiIs...",
+    "token": "<jwt>",
     "role": "COFFEE_ADMIN",
-    "coffeeId": "6aa5df5707f936c6faa35ca5",
+    "coffeeId": "64f000000000000000000001",
     "expiresIn": "12h"
   }
 }
 ```
 
-Errors: `401 Unauthorized` (missing/invalid/expired token) or `401 Invalid PIN` (wrong PIN),
-`404 Coffee not found`, `400 Validation failed`. All routes below require
-`Authorization: Bearer <token>`.
+New and seeded coffees use `0000` as the initial PIN. The stored value is a
+scrypt hash, not plaintext.
 
-### Application admin — coffees (all of them)
+### Application admin
 
-| Method | Path | Description |
-| --- | --- | --- |
-| `GET` | `/api/v1/admin/coffees` | List every coffee (with `categoryCount`) |
-| `POST` | `/api/v1/admin/coffees` | Create a coffee (default PIN `0000`, hashed) |
-| `GET` | `/api/v1/admin/coffees/:coffeeId` | Get one coffee |
-| `PATCH` | `/api/v1/admin/coffees/:coffeeId` | Update name / logo / slug |
-| `PATCH` | `/api/v1/admin/coffees/:coffeeId/pin` | Reset that coffee's admin PIN to `0000` |
-| `DELETE` | `/api/v1/admin/coffees/:coffeeId` | Delete coffee + cascade categories → items |
+Every route in this section requires a valid bearer token whose role is
+`APP_ADMIN`.
 
-`POST` body: `{ "name": "…" (required), "logo": "https://…" (required), "slug": "…" (optional) }`.
-If `slug` is omitted it is auto-generated from the name (`Café Ternat` → `cafe-ternat`),
-deduplicated with a numeric suffix if needed.
+| Method | Endpoint | Body | Purpose |
+| --- | --- | --- | --- |
+| `GET` | `/api/v1/admin/coffees` | — | List all coffees with `categoryCount` |
+| `POST` | `/api/v1/admin/coffees` | `{ name, logo, slug? }` | Create a coffee; generated/default PIN is `0000` |
+| `GET` | `/api/v1/admin/coffees/:coffeeId` | — | Get one coffee |
+| `PATCH` | `/api/v1/admin/coffees/:coffeeId` | `{ name?, logo?, slug? }` | Update a coffee |
+| `PATCH` | `/api/v1/admin/coffees/:coffeeId/pin` | — | Reset its PIN to `0000` |
+| `DELETE` | `/api/v1/admin/coffees/:coffeeId` | — | Delete coffee and dependent categories/items |
+
+Example create:
+
+```bash
+curl -X POST http://localhost:4000/api/v1/admin/coffees ^
+  -H "Authorization: Bearer <APP_ADMIN_TOKEN>" ^
+  -H "Content-Type: application/json" ^
+  -d "{\"name\":\"Café Ternat\",\"logo\":\"https://example.com/logo.png\"}"
+```
+
+`slug` is optional. When omitted, it is generated from the name and made
+unique, for example `Café Ternat` becomes `cafe-ternat`. A requested slug
+that is already used returns `409`.
+
+Application-admin coffee DTO:
+
+```json
+{
+  "id": "64f000000000000000000001",
+  "name": "Café Ternat",
+  "logo": "https://example.com/logo.png",
+  "slug": "cafe-ternat",
+  "categoryCount": 0,
+  "createdAt": "2026-01-01T12:00:00.000Z",
+  "updatedAt": "2026-01-01T12:00:00.000Z"
+}
+```
+
+### Coffee admin
+
+Every route in this section requires a valid bearer token whose role is
+`COFFEE_ADMIN`. The token identifies exactly one coffee; there is no
+`coffeeId` request parameter on these routes.
+
+| Method | Endpoint | Body | Purpose |
+| --- | --- | --- | --- |
+| `GET` | `/api/v1/admin/my-coffee` | — | Read the assigned coffee |
+| `PATCH` | `/api/v1/admin/my-coffee` | `{ name?, logo?, slug? }` | Update the assigned coffee |
+| `PATCH` | `/api/v1/admin/my-coffee/pin` | `{ currentPin, newPin }` | Change the assigned coffee PIN |
+| `GET` | `/api/v1/admin/my-coffee/categories` | — | List assigned coffee categories |
+| `POST` | `/api/v1/admin/my-coffee/categories` | `{ name }` | Create a category |
+| `PATCH` | `/api/v1/admin/my-coffee/categories/:categoryId` | `{ name }` | Rename an owned category |
+| `DELETE` | `/api/v1/admin/my-coffee/categories/:categoryId` | — | Delete category and its items |
+| `GET` | `/api/v1/admin/my-coffee/categories/:categoryId/items` | — | List items in an owned category |
+| `POST` | `/api/v1/admin/my-coffee/categories/:categoryId/items` | `{ name, price, description?, image? }` | Create an item |
+| `PATCH` | `/api/v1/admin/my-coffee/items/:itemId` | `{ name?, price?, description?, image? }` | Update an owned item |
+| `DELETE` | `/api/v1/admin/my-coffee/items/:itemId` | — | Delete an owned item |
+
+Category example:
+
+```http
+POST /api/v1/admin/my-coffee/categories
+Authorization: Bearer <COFFEE_ADMIN_TOKEN>
+Content-Type: application/json
+
+{ "name": "Snacks" }
+```
+
+Item example:
+
+```http
+POST /api/v1/admin/my-coffee/categories/64f000000000000000000010/items
+Authorization: Bearer <COFFEE_ADMIN_TOKEN>
+Content-Type: application/json
+
+{
+  "name": "Croissant",
+  "description": "Feuilleté pur beurre",
+  "price": 2,
+  "image": "https://example.com/croissant.jpg"
+}
+```
+
+Coffee-admin item responses include `itemCategoryId`, `createdAt`, and
+`updatedAt`. A coffee admin supplying another coffee's category or item ID
+receives `404` and no data is modified.
+
+## PIN security and authorization
+
+This is an MVP lightweight access-control mechanism, not a complete enterprise
+identity system.
+
+### Storage and verification
+
+- The application-admin PIN comes from `APP_ADMIN_PIN`. It is not stored in
+  MongoDB and is compared in constant time.
+- Each coffee has a four-digit PIN. New and reset coffee PINs default to
+  `0000`.
+- Coffee PINs are stored as `scrypt$<base64 salt>$<base64 derived key>`.
+- PIN verification derives a key with the stored salt and uses
+  `timingSafeEqual`.
+- Plain PINs are never returned in API responses.
+
+### Sessions/tokens
+
+Successful login issues a short-lived JWT signed with `ADMIN_SECRET`, using
+HS256 and issuer `menuscan-backend`. The token contains:
+
+```json
+{ "role": "APP_ADMIN" }
+```
+
+or:
+
+```json
+{ "role": "COFFEE_ADMIN", "coffeeId": "<owned coffee id>" }
+```
+
+The lifetime is controlled by `ADMIN_TOKEN_TTL`. The server does not persist
+sessions; clients must send the bearer token on each admin request.
+
+### Authorization boundary
+
+```text
+APP_ADMIN
+    ↓
+all coffees, categories, items, and images
+
+COFFEE_ADMIN
+    ↓
+only the coffeeId in its verified token
+```
+
+Ownership is enforced in repositories and services, not merely by frontend
+route conventions. For example:
+
+- A coffee admin can update its own category.
+- A coffee admin cannot update a category belonging to another coffee, even
+  when it knows the other category's ObjectId.
+- A coffee admin cannot update an item from another coffee because the
+  backend walks `item → itemCategory → coffee`.
+- An app admin can list, create, update, reset, and delete any coffee.
+- Image deletion is also ownership checked; app admins can manage any image,
+  while coffee admins can manage only images owned by their coffee.
+
+### PIN operations
+
+- App admin reset: `PATCH /api/v1/admin/coffees/:coffeeId/pin` sets the target
+  coffee PIN to hashed `0000`.
+- Coffee admin change: `PATCH /api/v1/admin/my-coffee/pin` requires
+  `currentPin` and a different four-digit `newPin`.
+- Changing a coffee PIN does not revoke already-issued JWTs; tokens expire
+  according to `ADMIN_TOKEN_TTL`.
+
+For production, replace this MVP gate with a full identity provider,
+per-user accounts, rate limiting, audit events, and token/session revocation.
+
+## Images
+
+Image routes are available to both admin roles:
+
+| Method | Endpoint | Content type | Purpose |
+| --- | --- | --- | --- |
+| `POST` | `/api/v1/admin/images` | `multipart/form-data`, field `file` | Upload an image |
+| `DELETE` | `/api/v1/admin/images/:imageId` | — | Delete a managed image |
+
+Uploads are held in memory and sent to Cloudflare R2. Accepted formats
+are JPEG, PNG, WebP, and GIF, with a configurable maximum size of 25 MB by
+default (`IMAGE_UPLOAD_MAX_MB`, bounded to 100 MB). The backend checks
+the MIME type, file signature/magic bytes, and extension before upload.
+
+Successful upload:
 
 ```json
 {
   "success": true,
   "data": {
-    "id": "6aa5df5707f936c6faa35ca5",
-    "name": "Café Ternat",
-    "logo": "https://example.com/ternat-logo.png",
-    "slug": "cafe-ternat",
-    "categoryCount": 0,
-    "createdAt": "2026-09-13T00:29:04.522Z",
-    "updatedAt": "2026-09-13T00:29:04.522Z"
+    "imageId": "<cloudflare-image-id>",
+    "url": "https://cdn.example.com/uploads/2026-09-14/<uuid>.webp"
   }
 }
 ```
 
-Errors: `401` no/invalid token, `403` coffee admin, `404` unknown coffee, `409` slug taken,
-`400` validation.
+The returned URL may be supplied as a coffee `logo` or item `image`. When it
+is a managed Cloudflare delivery URL, the backend records the image ID and
+can clean it up when the owning entity is replaced or deleted. If Cloudflare
+is not configured, upload/delete operations that require it return `503`.
 
-### Coffee admin — own coffee (`/api/v1/admin/my-coffee`)
+## Errors
 
-The working coffee is the one bound to the token. **No request input can retarget these
-routes to another coffee.**
+All API errors use:
 
-| Method | Path | Description |
-| --- | --- | --- |
-| `GET` | `/api/v1/admin/my-coffee` | Own coffee info (same DTO as above) |
-| `PATCH` | `/api/v1/admin/my-coffee` | Update own name / logo / slug |
-| `PATCH` | `/api/v1/admin/my-coffee/pin` | Change own PIN: `{ "currentPin", "newPin" }` |
-| `GET` | `/api/v1/admin/my-coffee/categories` | List own categories |
-| `POST` | `/api/v1/admin/my-coffee/categories` | Create category `{ "name" }` |
-| `PATCH` | `/api/v1/admin/my-coffee/categories/:categoryId` | Rename own category |
-| `DELETE` | `/api/v1/admin/my-coffee/categories/:categoryId` | Delete own category (cascades its items) |
-| `GET` | `/api/v1/admin/my-coffee/categories/:categoryId/items` | List items of own category |
-| `POST` | `/api/v1/admin/my-coffee/categories/:categoryId/items` | Create item in own category |
-| `PATCH` | `/api/v1/admin/my-coffee/items/:itemId` | Update own item |
-| `DELETE` | `/api/v1/admin/my-coffee/items/:itemId` | Delete own item |
-
-`POST /categories` body: `{ "name": "…" }`. Item bodies:
-`{ "name", "description"?, "price" (≥ 0), "image"? }` — on `PATCH` every field is optional but at
-least one must be provided. `PATCH /my-coffee/pin` requires `currentPin` and `newPin`, both exactly
-4 digits and different.
-
-**Ownership behavior:** targeting a `categoryId` / `itemId` that belongs to *another* coffee
-returns `404 Category not found` / `404 Item not found`, and the other coffee's data is never
-modified.
-
-### Deletion strategy (no orphans)
-
-Coffee and category deletes are dependency-ordered cascades:
-
-```text
-DELETE Coffee   → delete its items → delete its categories → delete the coffee
-DELETE Category → delete its items → delete the category
+```json
+{
+  "success": false,
+  "message": "Validation failed",
+  "details": [
+    { "field": "body.price", "message": "Item price must be zero or greater." }
+  ]
+}
 ```
 
-Rows are removed children-first so a partially-failed run can never leave items orphaned under a
-surviving category. On a replica-set deployment the same ordered deletes should run inside a
-multi-document transaction; the standalone dev MongoDB does not support transactions, so the
-deterministic order is the safety mechanism.
+Typical status codes:
 
----
-
-## Data isolation (multi-tenancy)
-
-MENU SCAN serves unlimited independent coffee shops. The rules:
-
-1. **A coffee only ever sees its own categories.** `GET /api/v1/coffees/:slug` loads categories
-   exclusively through the `coffeeId` relation of the resolved coffee.
-2. **A category only ever returns its own items.** `GET /api/v1/categories/:id/items` scopes the
-   query strictly by `itemCategoryId`.
-3. **Referential integrity at write time** is enforced by Mongoose refs + `(coffeeId, name)`
-   unique index; **answer correctness at read time** is enforced in the repository layer — the
-   HTTP/controller layer can never inject a query that crosses tenants.
-
-Same-named categories or items across different coffees are fine and remain fully isolated
-(verified by the test suite). MongoDB is schemaless, so there are no foreign keys — isolation
-is enforced by the query design in `src/repositories/` and covered by integration tests in
-`tests/api.test.ts`.
-
----
-
-## Migrations
-
-MongoDB has no SQL DDL, so migrations manage **collections, `$jsonSchema` validators and
-indexes**. The runner in `src/db/migrate.ts` executes `src/db/migrations/*` in order and records
-each applied migration in the managed `_migrations` changelog collection — each migration runs
-exactly once per database.
-
-Add a new migration:
-
-1. Create a new file `src/db/migrations/0003_....ts` implementing `{ name, up, down? }`.
-2. Register it by importing it in `src/db/migrate.ts` (each file pushes itself onto the
-   managed `migrations` array in `src/db/migrations/index.ts`).
-3. Run `npm run db:migrate`.
-
-Rules: never rename, reorder or edit an already-applied migration; append new ones at the end.
-
-### Indexes and validators created
-
-| Migration | What it does |
+| Status | Meaning |
 | --- | --- |
-| `0001_init` | Creates the three collections with `$jsonSchema` validators + unique indexes (`coffees.slug`, `itemcategories (coffeeId, name)`) |
-| `0002_admin` | `collMod` on `coffees`: adds the nullable `adminPinHash` field to the validator |
+| `400` | Invalid input, malformed JSON, invalid identifier, or unsupported image |
+| `401` | Missing/invalid/expired bearer token or incorrect PIN |
+| `403` | Wrong admin role, cross-coffee image ownership violation, or CORS denial |
+| `404` | Unknown route, coffee, category, item, or image |
+| `409` | Duplicate slug, duplicate category name, or MongoDB duplicate key |
+| `413` | JSON body or image exceeds the configured limit |
+| `500` | Unexpected server-side failure; details are logged, not exposed |
+| `502` | Cloudflare R2 request failed |
+| `503` | Database readiness failure or Cloudflare R2 is not configured |
 
-Tables below describe the `0001_init` indexes:
+The 404 middleware runs before the centralized error handler. Internal errors
+are logged with request context while stack traces, tokens, and credentials
+are not returned to clients.
 
-| Collection | Index | Uniqueness |
-| --- | --- | --- |
-| `coffees` | `{ slug: 1 }` | unique — resolves `/:coffeeSlug` |
-| `itemcategories` | `{ coffeeId: 1, name: 1 }` | unique — no duplicate category names per coffee |
-| `itemcategories` | `{ coffeeId: 1 }` | — |
-| `items` | `{ itemCategoryId: 1 }` | — |
+## Security posture and known limitations
 
-`autoIndex` is disabled on the driver: indexes are owned by migrations, so environments stay
-consistent.
+Implemented protections include:
 
----
+- Helmet security headers.
+- `x-powered-by` disabled.
+- Exact-origin CORS using `FRONTEND_URL` and optional `CORS_ORIGINS`.
+- Wildcard CORS rejected in production.
+- Zod validation for environment variables, parameters, and JSON bodies.
+- 10 KB JSON request limit.
+- In-memory, size-limited, type-checked image uploads.
+- scrypt hashing for coffee PINs and constant-time comparisons.
+- HS256 JWT verification with issuer and algorithm checks.
+- Role and coffee-ownership checks on every protected operation.
+- Request IDs and structured logging without serializing authorization headers.
+- MongoDB schema validators and unique indexes.
 
-## Security
+Known MVP limitations:
 
-- **Helmet** security headers, `x-powered-by` disabled.
-- **CORS** restricted to `FRONTEND_URL` (+ optional `CORS_ORIGINS`); wildcard refused in production.
-- **Body limit** `10kb`, JSON parsing only.
-- **Validation** (Zod) before any database access.
-- **Error middleware** never leaks stack traces, credentials or internal details in responses;
-  internals are written only to server logs. `DATABASE_URL` is never logged.
-- Secrets live only in `.env` (git-ignored); a template ships as `.env.example`.
-- **PINs**: coffee PINs are stored only as one-way `node:crypto` **scrypt** hashes with per-value
-  salt and time-safe comparison; the app-admin PIN is compared in constant time and never stored.
-- **Admin tokens**: short-lived HS256 bearer tokens (secret `ADMIN_SECRET`, issuer-bound, expiry
-  `ADMIN_TOKEN_TTL`). Wrong/missing/expired tokens fail with `401`.
-- **Ownership**: coffee admins are scoped to one `coffeeId` embedded in their token; every
-  category/item operation re-validates the `item → itemCategory → coffee` chain server-side.
+- The app-admin PIN is one static environment value.
+- Coffee admins are shared per coffee, not individual identities.
+- There is no login throttling, account lockout, MFA, password recovery, or
+  server-side token revocation.
+- The default coffee PIN is `0000` until changed.
+- MongoDB and Cloudflare availability remain operational dependencies.
+- Public menu routes are intentionally unauthenticated and should be protected
+  by deployment/network controls if private menus are ever introduced.
 
-## Not included
+Before production, use strong unique secrets, change all default PINs, restrict
+CORS to deployed frontend origins, secure MongoDB network access/TLS, and add
+rate limiting and audit logging.
 
-Not built yet (by design for this version): customer accounts or authentication, cart,
-checkout, payments, orders, reviews, loyalty, analytics, notifications, and any admin roles
-beyond the two listed above. The layered `repositories → services → controllers` structure
-means these can all plug in later without touching the existing public/admin architecture.
+## Testing
+
+The test suite uses Vitest, Supertest, and `mongodb-memory-server`.
+
+```bash
+npm test
+npm run test:watch
+npm run typecheck
+npm run check
+```
+
+The tests cover public menu reads, admin CRUD behavior, role/ownership
+isolation, PIN authentication, cascade behavior, and image upload validation.
+Important authorization scenarios to preserve when extending the system:
+
+- App admin can manage every coffee.
+- Coffee admin can manage only the coffee in its token.
+- A category ID from another coffee is rejected.
+- An item ID from another coffee is rejected through the
+  `item → category → coffee` chain.
+- Invalid, expired, or wrong-role tokens are rejected.
+- PINs and image credentials do not appear in response payloads or logs.
+
+Use the existing test helpers and in-memory database approach rather than
+connecting tests to a developer's persistent MongoDB.
+
+## Deployment
+
+The expected production topology is:
+
+```text
+Customer QR code
+    ↓
+Next.js frontend
+    ↓
+Express API process
+    ↓
+MongoDB
+
+Admin image uploads ──> Cloudflare R2 (optional)
+```
+
+Deployment steps:
+
+```bash
+npm ci
+npm run db:migrate
+npm run build
+npm start
+```
+
+Set `NODE_ENV=production`, a strong random `ADMIN_SECRET`, the production
+`DATABASE_URL`, the exact deployed frontend `FRONTEND_URL`, and any additional
+explicit `CORS_ORIGINS`. Configure all three Cloudflare variables if image
+uploads are required.
+
+Expose `/health` as the liveness probe and `/health/ready` as the readiness
+probe. The readiness endpoint returns `503` when the MongoDB connection is not
+ready. The server binds to `HOST` and `PORT`, and handles `SIGINT`/`SIGTERM`
+with graceful HTTP and database shutdown.
+
+No deployment provider, reverse proxy, container image, or infrastructure
+definition is configured in this repository; those remain deployment-specific.
+
+## Development guidelines
+
+### Adding an entity
+
+1. Add a Mongoose schema under `src/models/`.
+2. Add a repository under `src/repositories/`.
+3. Add DTOs/types under `src/types/`.
+4. Add a migration for collections/indexes/validators.
+5. Add a service for business rules.
+6. Add Zod schemas under `src/validators/`.
+7. Add controllers and routes.
+8. Add focused tests.
+
+Do not put database calls in controllers or route files.
+
+### Adding an endpoint
+
+Register the route under the appropriate versioned router, attach validation
+before the controller, and use `sendSuccess` for successful responses.
+Protected routes should attach `requireAdmin` plus the narrowest role
+middleware available.
+
+### Adding authorization
+
+Never trust a client-supplied `coffeeId` as proof of ownership. Start from
+`req.admin.coffeeId`, then scope repository queries by that value or walk the
+relationship chain until ownership is proven. Return a not-found result when
+an owned-resource lookup fails, as the existing coffee-admin services do.
+
+### Adding a service or repository
+
+Services should orchestrate business behavior and translate missing/conflicting
+conditions into `ApiError`. Repositories should return persistence records,
+perform ownership-scoped queries, and avoid Express-specific concerns.
+
+### Adding validation
+
+Keep input schemas close to the route domain in `src/validators/`. PATCH
+schemas should reject empty updates. Validate before business logic and do not
+rely on Mongoose validation as a replacement for HTTP input validation.
+
+### Adding tests
+
+Prefer API-level tests through `createApp()` and the existing test helpers.
+Add both success and authorization-failure cases for any protected resource.
+
+### Adding migrations
+
+Append a uniquely named migration. Do not reorder or rename applied
+migrations. Make `up` idempotent where practical and document destructive
+rollback behavior.
+
+## Architecture decisions
+
+### MongoDB
+
+Menus are hierarchical, naturally document-oriented data with optional image
+metadata and varying category/item counts. MongoDB and Mongoose provide a
+simple model for this structure while indexes support slug and ownership
+lookups.
+
+### Express.js
+
+Express provides a small, explicit middleware pipeline and keeps the API
+framework independent from the Next.js frontend. The application factory is
+easy to exercise with Supertest.
+
+### Ownership through `ItemCategory`
+
+Items reference categories and categories reference coffees. This avoids
+duplicating `coffeeId` on every item and makes the hierarchy explicit. The
+repository deliberately walks the chain for coffee-admin operations to keep
+the authorization boundary correct.
+
+### Public menu endpoints are unauthenticated
+
+The QR menu is a customer-facing read-only experience. Requiring login would
+break the QR flow. Public queries are narrow and return only menu DTO fields;
+admin-only fields such as `adminPinHash` never enter those projections.
+
+### Two admin levels
+
+Application administrators need cross-coffee management for onboarding and
+support. Coffee administrators need a simple isolated backoffice for one
+shop. Separate route groups and role middleware make this boundary visible in
+the code.
+
+### Lightweight PIN authentication
+
+The PIN flow is intentionally small for the MVP: one app PIN, one PIN per
+coffee, and short-lived bearer tokens. Coffee PINs are still hashed securely,
+but this design is not intended to replace a full identity platform.
+
+## Quick reference
+
+### System
+
+| Method | Endpoint | Access | Purpose |
+| --- | --- | --- | --- |
+| `GET` | `/` | Public | API overview |
+| `GET` | `/health` | Public | Liveness |
+| `GET` | `/health/ready` | Public | MongoDB readiness |
+
+### Public menu
+
+| Method | Endpoint | Access | Purpose |
+| --- | --- | --- | --- |
+| `GET` | `/api/v1/coffees/:coffeeSlug` | Public | Resolve coffee and categories |
+| `GET` | `/api/v1/categories/:categoryId/items` | Public | List category items |
+
+### Admin
+
+| Method | Endpoint | Access | Purpose |
+| --- | --- | --- | --- |
+| `POST` | `/api/v1/admin/auth/app` | Public login | Issue app-admin token |
+| `POST` | `/api/v1/admin/auth/coffee/:coffeeSlug` | Public login | Issue coffee-admin token |
+| `GET` | `/api/v1/admin/coffees` | `APP_ADMIN` | List all coffees |
+| `POST` | `/api/v1/admin/coffees` | `APP_ADMIN` | Create coffee |
+| `GET` | `/api/v1/admin/coffees/:coffeeId` | `APP_ADMIN` | Get coffee |
+| `PATCH` | `/api/v1/admin/coffees/:coffeeId` | `APP_ADMIN` | Update coffee |
+| `PATCH` | `/api/v1/admin/coffees/:coffeeId/pin` | `APP_ADMIN` | Reset coffee PIN |
+| `DELETE` | `/api/v1/admin/coffees/:coffeeId` | `APP_ADMIN` | Delete coffee tree |
+| `GET` | `/api/v1/admin/my-coffee` | `COFFEE_ADMIN` | Get own coffee |
+| `PATCH` | `/api/v1/admin/my-coffee` | `COFFEE_ADMIN` | Update own coffee |
+| `PATCH` | `/api/v1/admin/my-coffee/pin` | `COFFEE_ADMIN` | Change own PIN |
+| `GET` | `/api/v1/admin/my-coffee/categories` | `COFFEE_ADMIN` | List own categories |
+| `POST` | `/api/v1/admin/my-coffee/categories` | `COFFEE_ADMIN` | Create category |
+| `PATCH` | `/api/v1/admin/my-coffee/categories/:categoryId` | `COFFEE_ADMIN` | Rename category |
+| `DELETE` | `/api/v1/admin/my-coffee/categories/:categoryId` | `COFFEE_ADMIN` | Delete category tree |
+| `GET` | `/api/v1/admin/my-coffee/categories/:categoryId/items` | `COFFEE_ADMIN` | List category items |
+| `POST` | `/api/v1/admin/my-coffee/categories/:categoryId/items` | `COFFEE_ADMIN` | Create item |
+| `PATCH` | `/api/v1/admin/my-coffee/items/:itemId` | `COFFEE_ADMIN` | Update item |
+| `DELETE` | `/api/v1/admin/my-coffee/items/:itemId` | `COFFEE_ADMIN` | Delete item |
+| `POST` | `/api/v1/admin/images` | Any admin | Upload Cloudflare image |
+| `DELETE` | `/api/v1/admin/images/:imageId` | Any admin | Delete owned image |
