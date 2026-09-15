@@ -110,6 +110,7 @@ export async function finishServiceShift(coffeeId: string, shiftId: string): Pro
   }
 
   const openTables = await listTableSessions(coffeeId, {
+    serviceShiftId: shiftId,
     status: "ACTIVE",
     limit: 1000,
   });
@@ -170,6 +171,15 @@ export async function finishTableSession(coffeeId: string, sessionId: string): P
         (order) => order.status === "CONFIRMED" && order.paymentStatus !== "PAID",
       )
     : [];
+  const pendingOrders = Array.isArray((current as { orders?: unknown[] }).orders)
+    ? (current as { orders: any[] }).orders.filter((order) => order.status === "PENDING")
+    : [];
+  if (pendingOrders.length > 0) {
+    throw new ApiError(409, "Table has pending orders.", {
+      code: "TABLE_PENDING_ORDERS",
+      orders: pendingOrders.map(paymentOrderDto),
+    });
+  }
   if (unpaidOrders.length > 0) {
     throw new ApiError(409, "Table has unpaid confirmed orders.", {
       code: "TABLE_UNPAID_ORDERS",

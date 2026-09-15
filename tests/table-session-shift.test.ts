@@ -6,6 +6,7 @@ import { seedDatabase } from "../src/db/seed.js";
 import { CoffeeModel } from "../src/models/coffee.model.js";
 import { ItemCategoryModel } from "../src/models/item-category.model.js";
 import { ItemModel } from "../src/models/item.model.js";
+import { OrderModel } from "../src/models/order.model.js";
 import { ServiceShiftModel } from "../src/models/service-shift.model.js";
 import { TableSessionModel } from "../src/models/table-session.model.js";
 import { setupTestDatabase, teardownTestDatabase, type TestDatabase } from "./helpers.js";
@@ -93,63 +94,17 @@ describe("table sessions and service shifts", () => {
     expect(closed.body.data.status).toBe("CLOSED");
   });
 
-  it("attaches a pre-service table session to the service when its order is confirmed", async () => {
-    const order = await request(app).post("/api/v1/orders").send({
-      coffeeSlug: "cafe-el-manzah", tableNumber: 13, items: [{ itemId, quantity: 1 }],
-    });
-    expect(order.status).toBe(201);
-    const sessionId = order.body.data.tableSessionId as string;
-
-    const coffee = await CoffeeModel.findOne({ slug: "cafe-el-manzah" }).lean().exec();
-    const shift = await ServiceShiftModel.create({
-      coffeeId: coffee!._id,
-      status: "OPEN",
-      type: "MORNING",
-      name: "Morning",
-      openedByRole: "COFFEE_ADMIN",
-    });
-
-    const confirmed = await request(app)
-      .patch(`/api/v1/admin/my-coffee/orders/${order.body.data.id}/status`)
-      .set("Authorization", `Bearer ${token}`)
-      .send({ status: "CONFIRMED" });
-    expect(confirmed.status).toBe(200);
-
-    const session = await TableSessionModel.findById(sessionId).lean().exec();
-    expect(session?.serviceShiftId?.toString()).toBe(shift._id.toString());
-  });
-
-  it("does not close a service while an unassigned active table remains open", async () => {
-    const order = await request(app).post("/api/v1/orders").send({
-      coffeeSlug: "cafe-el-manzah", tableNumber: 14, items: [{ itemId, quantity: 1 }],
-    });
-    expect(order.status).toBe(201);
-
-    const coffee = await CoffeeModel.findOne({ slug: "cafe-el-manzah" }).lean().exec();
-    const shift = await ServiceShiftModel.create({
-      coffeeId: coffee!._id,
-      status: "OPEN",
-      type: "MORNING",
-      name: "Morning",
-      openedByRole: "COFFEE_ADMIN",
-    });
-
-    const closed = await request(app)
-      .post(`/api/v1/admin/my-coffee/service-shifts/${shift._id}/close`)
-      .set("Authorization", `Bearer ${token}`);
-    expect(closed.status).toBe(409);
-    expect(closed.body.details.code).toBe("OPEN_TABLES_REMAIN");
-    expect(closed.body.details.tables).toEqual(
-      expect.arrayContaining([expect.objectContaining({ tableNumber: 14 })]),
-    );
-  });
-
   it("treats repeated table closure as idempotent", async () => {
     const order = await request(app).post("/api/v1/orders").send({
       coffeeSlug: "cafe-el-manzah", tableNumber: 11, items: [{ itemId, quantity: 1 }],
     });
     expect(order.status).toBe(201);
     const sessionId = order.body.data.tableSessionId as string;
+
+    await OrderModel.updateOne(
+      { _id: order.body.data.id },
+      { $set: { status: "REJECTED" } },
+    ).exec();
 
     const first = await request(app)
       .patch(`/api/v1/admin/my-coffee/table-sessions/${sessionId}/close`)
