@@ -114,6 +114,14 @@ describe("table sessions and service shifts", () => {
   });
 
   it("blocks closing a table while a confirmed order remains unpaid", async () => {
+    const coffee = await CoffeeModel.findOne({ slug: "cafe-el-manzah" }).lean().exec();
+    await ServiceShiftModel.create({
+      coffeeId: coffee!._id,
+      status: "OPEN",
+      type: "MORNING",
+      name: "Morning",
+      openedByRole: "COFFEE_ADMIN",
+    });
     const order = await request(app).post("/api/v1/orders").send({
       coffeeSlug: "cafe-el-manzah", tableNumber: 12, items: [{ itemId, quantity: 1 }],
     });

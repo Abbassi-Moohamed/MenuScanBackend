@@ -7,6 +7,8 @@ import { CoffeeModel } from "../src/models/coffee.model.js";
 import { ItemCategoryModel } from "../src/models/item-category.model.js";
 import { ItemModel } from "../src/models/item.model.js";
 import { OrderModel } from "../src/models/order.model.js";
+import { ServiceShiftModel } from "../src/models/service-shift.model.js";
+import { changeOrderStatus } from "../src/services/order.service.js";
 import { setupTestDatabase, teardownTestDatabase, type TestDatabase } from "./helpers.js";
 
 describe("visitor ordering", () => {
@@ -51,6 +53,26 @@ describe("visitor ordering", () => {
     expect(response.status).toBe(400);
   });
 
+  it("blocks confirmation when the coffee has no active service", async () => {
+    const coffee = await CoffeeModel.findOne({ slug: "cafe-el-manzah" }).lean().exec();
+    const categoryIds = await ItemCategoryModel.find({ coffeeId: coffee!._id }).distinct("_id").exec();
+    const item = await ItemModel.findOne({ itemCategoryId: { $in: categoryIds } }).lean().exec();
+    await ServiceShiftModel.deleteMany({ coffeeId: coffee!._id });
+    const created = await request(app).post("/api/v1/orders").send({
+      coffeeSlug: "cafe-el-manzah",
+      tableNumber: 2,
+      items: [{ itemId: item!._id.toString(), quantity: 1 }],
+    });
+
+    await expect(
+      changeOrderStatus(coffee!._id.toString(), created.body.data.id, "CONFIRMED"),
+    ).rejects.toMatchObject({
+      statusCode: 409,
+      details: { code: "NO_ACTIVE_SERVICE" },
+    });
+    expect((await OrderModel.findById(created.body.data.id).lean().exec())?.status).toBe("PENDING");
+  });
+
   it("scopes coffee-admin order operations and enforces status transitions", async () => {
     const coffee = await CoffeeModel.findOne({ slug: "cafe-el-manzah" }).lean().exec();
     const categoryIds = await ItemCategoryModel.find({ coffeeId: coffee!._id }).distinct("_id").exec();
@@ -61,6 +83,13 @@ describe("visitor ordering", () => {
     });
     const login = await request(app).post("/api/v1/admin/auth/coffee/cafe-el-manzah").send({ pin: "0000" });
     const token = login.body.data.token as string;
+    await ServiceShiftModel.create({
+      coffeeId: coffee!._id,
+      status: "OPEN",
+      type: "MORNING",
+      name: "Morning",
+      openedByRole: "COFFEE_ADMIN",
+    });
     const orderId = created.body.data.id as string;
     const listed = await request(app).get("/api/v1/admin/my-coffee/orders").set("Authorization", `Bearer ${token}`);
     expect(listed.status).toBe(200);
@@ -83,6 +112,13 @@ describe("visitor ordering", () => {
     });
     const login = await request(app).post("/api/v1/admin/auth/coffee/cafe-el-manzah").send({ pin: "0000" });
     const token = login.body.data.token as string;
+    await ServiceShiftModel.create({
+      coffeeId: coffee!._id,
+      status: "OPEN",
+      type: "MORNING",
+      name: "Morning",
+      openedByRole: "COFFEE_ADMIN",
+    });
     const orderId = created.body.data.id as string;
 
     const pendingPayment = await request(app).patch(`/api/v1/admin/my-coffee/orders/${orderId}/payment`)

@@ -42,10 +42,22 @@ export async function findOrder(orderId: string) {
   return OrderModel.findById(orderId).lean().exec();
 }
 
-export async function updateOrderStatus(coffeeId: string, orderId: string, status: OrderStatus, changedAt: Date) {
+export async function updateOrderStatus(
+  coffeeId: string,
+  orderId: string,
+  status: OrderStatus,
+  changedAt: Date,
+  serviceShiftId?: Types.ObjectId,
+) {
   return OrderModel.findOneAndUpdate(
-    { _id: orderId, coffeeId },
-    { $set: { status }, $push: { statusHistory: { status, changedAt } } },
+    { _id: orderId, coffeeId, ...(status === "CONFIRMED" ? { status: "PENDING" } : {}) },
+    {
+      $set: {
+        status,
+        ...(serviceShiftId ? { serviceShiftId } : {}),
+      },
+      $push: { statusHistory: { status, changedAt } },
+    },
     { returnDocument: "after", runValidators: true },
   ).lean().exec();
 }

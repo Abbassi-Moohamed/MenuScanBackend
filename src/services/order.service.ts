@@ -131,7 +131,21 @@ export async function changeOrderStatus(coffeeId: string, orderId: string, nextS
   if (!transitions[current.status as OrderStatus].includes(nextStatus)) {
     throw new ApiError(409, `Cannot change order status from ${current.status} to ${nextStatus}.`);
   }
-  const updated = await updateOrderStatus(coffeeId, orderId, nextStatus, new Date());
+  const activeService = nextStatus === "CONFIRMED"
+    ? await findCurrentServiceShift(coffeeId)
+    : null;
+  if (nextStatus === "CONFIRMED" && !activeService) {
+    throw new ApiError(409, "An active service is required before confirming orders.", {
+      code: "NO_ACTIVE_SERVICE",
+    });
+  }
+  const updated = await updateOrderStatus(
+    coffeeId,
+    orderId,
+    nextStatus,
+    new Date(),
+    activeService?._id,
+  );
   if (!updated) throw new ApiError(404, "Order not found");
   return dto(updated);
 }
