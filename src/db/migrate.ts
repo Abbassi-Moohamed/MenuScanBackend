@@ -13,6 +13,7 @@ import "./migrations/0007_orders.js";
 import "./migrations/0008_order_contract.js";
 import "./migrations/0009_table_sessions_service_shifts.js";
 import "./migrations/0010_order_payment.js";
+import "./migrations/0011_item_category_name_index.js";
 import { migrations } from "./migrations/index.js";
 import { logger } from "../utils/logger.js";
 

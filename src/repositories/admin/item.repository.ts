@@ -89,19 +89,7 @@ export async function createItemForCategory(
   input: AdminItemCreateInput,
 ): Promise<AdminItemRow> {
   const item = await ItemModel.create({ ...input, itemCategoryId: categoryId });
-  return {
-    _id: item._id,
-    name: item.name,
-    description: item.description ?? null,
-    price: item.price,
-    promotion: item.promotion ?? null,
-    isAvailable: item.isAvailable ?? true,
-    image: item.image ?? null,
-    imageId: item.imageId ?? null,
-    itemCategoryId: item.itemCategoryId,
-    createdAt: item.createdAt,
-    updatedAt: item.updatedAt,
-  };
+  return toRow(item);
 }
 
 /**
