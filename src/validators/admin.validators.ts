@@ -106,3 +106,53 @@ export const changePinBodySchema = z
     message: "New PIN must be different from the current PIN.",
     path: ["newPin"],
   });
+export const insightsQuerySchema = z
+  .object({
+    startDate: z.string().trim().max(30).optional(),
+    endDate: z.string().trim().max(30).optional(),
+    from: z.string().trim().max(30).optional(),
+    to: z.string().trim().max(30).optional(),
+    serviceShiftId: z.string().regex(MONGODB_ID_PATTERN, MONGODB_ID_MESSAGE).optional(),
+    shiftId: z.string().regex(MONGODB_ID_PATTERN, MONGODB_ID_MESSAGE).optional(),
+  })
+  .transform((value) => ({
+    startDate: value.startDate ?? value.from,
+    endDate: value.endDate ?? value.to,
+    serviceShiftId: value.serviceShiftId ?? value.shiftId,
+  }))
+  .refine((value) => (!value.startDate || !Number.isNaN(new Date(value.startDate).getTime())) && (!value.endDate || !Number.isNaN(new Date(value.endDate).getTime())), {
+    message: "Dates must be valid ISO dates.",
+    path: ["startDate"],
+  })
+  .refine((value) => !value.startDate || !value.endDate || new Date(value.startDate).getTime() <= new Date(value.endDate).getTime(), {
+    message: "startDate must be before or equal to endDate.",
+    path: ["startDate"],
+  });
+
+export const serviceShiftIdParamsSchema = z.object({
+  shiftId: z.string().regex(MONGODB_ID_PATTERN, MONGODB_ID_MESSAGE),
+});
+
+export const tableSessionIdParamsSchema = z.object({
+  sessionId: z.string().regex(MONGODB_ID_PATTERN, MONGODB_ID_MESSAGE),
+});
+
+export const openServiceShiftBodySchema = z.object({
+  name: z.string().trim().min(1).max(120).optional(),
+  type: z.enum(["MORNING", "AFTERNOON", "CUSTOM"]).optional(),
+  label: z.string().trim().min(1).max(120).optional(),
+  notes: z.string().trim().max(500).optional(),
+});
+
+export const listServiceShiftsQuerySchema = z.object({
+  status: z.enum(["OPEN", "CLOSED"]).optional(),
+  page: z.coerce.number().int().min(1).max(10000).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
+
+export const listTableSessionsQuerySchema = z.object({
+  serviceShiftId: z.string().regex(MONGODB_ID_PATTERN, MONGODB_ID_MESSAGE).optional(),
+  status: z.enum(["ACTIVE", "CLOSED"]).optional(),
+  page: z.coerce.number().int().min(1).max(10000).default(1),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});

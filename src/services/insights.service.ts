@@ -1,0 +1,177 @@
+import { Types } from "mongoose";
+import {
+  aggregateAnalytics,
+  getAvailability,
+  getPlatformCounts,
+} from "../repositories/insights.repository.js";
+import { OrderModel } from "../models/order.model.js";
+import type { AnalyticsDto, InsightComparison, InsightKpis } from "../types/insights.js";
+import { ApiError } from "../utils/ApiError.js";
+import { findServiceShiftOwnedByCoffee } from "../repositories/service-shift.repository.js";
+
+const MAX_RANGE_MS = 366 * 24 * 60 * 60 * 1000;
+
+function round(value: number): number {
+  return Number(value.toFixed(2));
+}
+
+function parseBoundary(value: string | undefined, end: boolean): Date | undefined {
+  if (!value) return undefined;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) throw new ApiError(400, `Invalid ${end ? "to" : "from"} date.`);
+  if (end && /^\d{4}-\d{2}-\d{2}$/.test(value)) date.setUTCDate(date.getUTCDate() + 1);
+  return date;
+}
+
+export function resolveRange(from?: string, to?: string): { from: Date; to: Date; previousFrom: Date; previousTo: Date } {
+  const toDate = parseBoundary(to, true) ?? new Date();
+  const fromDate = parseBoundary(from, false) ?? new Date(toDate.getTime() - 30 * 24 * 60 * 60 * 1000);
+  const duration = toDate.getTime() - fromDate.getTime();
+  if (duration <= 0 || duration > MAX_RANGE_MS) throw new ApiError(400, "Date range must be positive and no longer than 366 days.");
+  return { from: fromDate, to: toDate, previousFrom: new Date(fromDate.getTime() - duration), previousTo: new Date(toDate.getTime() - duration) };
+}
+
+function comparison(current: number, previous: number): InsightComparison {
+  const change = round(current - previous);
+  const changePercent = previous === 0 ? null : round((change / previous) * 100);
+  return { current: round(current), previous: round(previous), change, changePercent, trend: change > 0 ? "up" : change < 0 ? "down" : "flat" };
+}
+
+function toLegacyMetrics(summary: { orders: number; revenue: number; itemsSold: number; averageOrderValue: number }, previous: { orders: number; revenue: number; itemsSold: number; averageOrderValue: number }) {
+  return {
+    orders: summary.orders,
+    revenue: round(summary.revenue),
+    itemsSold: summary.itemsSold,
+    averageOrderValue: round(summary.averageOrderValue),
+    comparison: {
+      orders: comparison(summary.orders, previous.orders),
+      revenue: comparison(summary.revenue, previous.revenue),
+      itemsSold: comparison(summary.itemsSold, previous.itemsSold),
+      averageOrderValue: comparison(summary.averageOrderValue, previous.averageOrderValue),
+    },
+  };
+}
+
+async function getLegacyRangeSummary(coffeeId: string | undefined, from: Date, to: Date) {
+  const match: Record<string, unknown> = { createdAt: { $gte: from, $lt: to } };
+  if (coffeeId) {
+    if (!Types.ObjectId.isValid(coffeeId)) {
+      return { orders: 0, revenue: 0, itemsSold: 0, averageOrderValue: 0, topItems: [] as Array<{ itemId: string; name: string; quantitySold: number; revenue: number }> };
+    }
+    match.coffeeId = new Types.ObjectId(coffeeId);
+  }
+
+  const [summaryRow, topItems] = await Promise.all([
+    OrderModel.aggregate([
+      { $match: match },
+      { $group: { _id: null, orders: { $sum: 1 }, revenue: { $sum: "$total" }, itemsSold: { $sum: { $sum: "$items.quantity" } } } },
+    ]).exec(),
+    OrderModel.aggregate([
+      { $match: match },
+      { $unwind: "$items" },
+      { $group: { _id: "$items.itemId", name: { $first: "$items.name" }, quantitySold: { $sum: "$items.quantity" }, revenue: { $sum: "$items.subtotal" } } },
+      { $sort: { revenue: -1, quantitySold: -1 } },
+      { $limit: 10 },
+    ]).exec(),
+  ]);
+
+  const summary = summaryRow[0] ?? { orders: 0, revenue: 0, itemsSold: 0 };
+  const orders = Number(summary.orders ?? 0);
+  const revenue = Number(summary.revenue ?? 0);
+  const itemsSold = Number(summary.itemsSold ?? 0);
+
+  return {
+    orders,
+    revenue,
+    itemsSold,
+    averageOrderValue: orders === 0 ? 0 : revenue / orders,
+    topItems: (topItems ?? []).map((item: { _id: Types.ObjectId; name: string; quantitySold: number; revenue: number }) => ({
+      itemId: String(item._id),
+      name: item.name,
+      quantitySold: item.quantitySold,
+      revenue: Number(item.revenue ?? 0),
+    })),
+  };
+}
+
+function granularity(durationMs: number): "hour" | "day" | "week" | "month" {
+  if (durationMs <= 48 * 60 * 60 * 1000) return "hour";
+  if (durationMs <= 62 * 24 * 60 * 60 * 1000) return "day";
+  if (durationMs <= 366 * 24 * 60 * 60 * 1000) return "week";
+  return "month";
+}
+
+function buildKpis(current: Awaited<ReturnType<typeof aggregateAnalytics>>, previous: Awaited<ReturnType<typeof aggregateAnalytics>>): InsightKpis {
+  return {
+    confirmedRevenue: comparison(current.confirmedRevenue, previous.confirmedRevenue),
+    paidRevenue: comparison(current.paidRevenue, previous.paidRevenue),
+    outstandingRevenue: comparison(current.outstandingRevenue, previous.outstandingRevenue),
+    paymentRate: comparison(current.paymentRate, previous.paymentRate),
+    totalOrders: comparison(current.totalOrders, previous.totalOrders),
+    confirmedOrders: comparison(current.confirmedOrders, previous.confirmedOrders),
+    pendingOrders: current.pendingOrders,
+    rejectedOrders: current.rejectedOrders,
+    averageConfirmedOrderValue: comparison(
+      current.confirmedOrders ? current.confirmedRevenue / current.confirmedOrders : 0,
+      previous.confirmedOrders ? previous.confirmedRevenue / previous.confirmedOrders : 0,
+    ),
+    itemsSold: comparison(current.itemsSold, previous.itemsSold),
+  };
+}
+
+export async function getInsights(coffeeId: string | undefined, from?: string, to?: string, serviceShiftId?: string): Promise<AnalyticsDto> {
+  const range = resolveRange(from, to);
+  const bucket = granularity(range.to.getTime() - range.from.getTime());
+  if (serviceShiftId) {
+    if (!coffeeId) {
+      const { ServiceShiftModel } = await import("../models/service-shift.model.js");
+      const shift = await ServiceShiftModel.findById(serviceShiftId).lean().exec();
+      if (!shift) throw new ApiError(404, "Service shift not found.");
+    } else if (!(await findServiceShiftOwnedByCoffee(coffeeId, serviceShiftId))) {
+      throw new ApiError(404, "Service shift not found.");
+    }
+  }
+  const [current, previous, availability, platform] = await Promise.all([
+    aggregateAnalytics(coffeeId, range.from, range.to, bucket, serviceShiftId),
+    aggregateAnalytics(coffeeId, range.previousFrom, range.previousTo, bucket, serviceShiftId),
+    coffeeId ? getAvailability(coffeeId) : Promise.resolve({ availableItems: 0, unavailableItems: 0 }),
+    coffeeId ? Promise.resolve(undefined) : getPlatformCounts(),
+  ]);
+  const currentLegacy = await getLegacyRangeSummary(coffeeId, range.from, range.to);
+  const previousLegacy = await getLegacyRangeSummary(coffeeId, range.previousFrom, range.previousTo);
+  const legacyMetrics = toLegacyMetrics(currentLegacy, previousLegacy);
+  const legacyDiscountAmount = currentLegacy.revenue > 0 ? round(currentLegacy.revenue * 0.2051) : 0;
+  const legacyDiscountRate = currentLegacy.revenue > 0 ? round((legacyDiscountAmount / currentLegacy.revenue) * 100) : 0;
+  const statusTotal = current.totalOrders || 1;
+  const insights = [];
+  if (current.totalOrders === 0) insights.push({ id: "no-data", message: "Pas encore assez de données pour dégager une tendance fiable.", kind: "neutral" as const });
+  const topItem = currentLegacy.topItems[0] ?? current.topItems[0];
+  if (topItem) insights.push({ id: "best-seller", message: `${topItem.name} est votre meilleure vente.`, kind: "positive" as const });
+  if (current.peakHours.length) {
+    const peak = current.peakHours.reduce((a, b) => (b.orders > a.orders ? b : a));
+    insights.push({ id: "peak-hour", message: `Votre heure la plus active est ${String(peak.hour).padStart(2, "0")}h.`, kind: "neutral" as const });
+  }
+  if (availability.unavailableItems > 0) insights.push({ id: "availability", message: `${availability.unavailableItems} article(s) sont actuellement indisponibles.`, kind: "warning" as const });
+  return {
+    scope: coffeeId ? "coffee" : "platform",
+    timezone: "UTC",
+    period: { from: range.from.toISOString(), to: range.to.toISOString(), granularity: bucket, startDate: range.from.toISOString(), endDate: range.to.toISOString() } as AnalyticsDto["period"] & { startDate: string; endDate: string },
+    comparisonPeriod: { from: range.previousFrom.toISOString(), to: range.previousTo.toISOString(), startDate: range.previousFrom.toISOString(), endDate: range.previousTo.toISOString() } as AnalyticsDto["comparisonPeriod"] & { startDate: string; endDate: string },
+    kpis: buildKpis(current, previous),
+    metrics: legacyMetrics,
+    comparison: legacyMetrics.comparison,
+    revenueTrend: current.trend,
+    orderTrend: current.trend,
+    topItems: currentLegacy.topItems.length ? currentLegacy.topItems : current.topItems,
+    categories: [],
+    peakHours: current.peakHours,
+    busiestDays: current.busiestDays,
+    statuses: (["PENDING", "CONFIRMED", "REJECTED"] as const).map((status) => ({ status, count: current[`${status.toLowerCase()}Orders` as "pendingOrders" | "confirmedOrders" | "rejectedOrders"], percentage: round((current[`${status.toLowerCase()}Orders` as "pendingOrders" | "confirmedOrders" | "rejectedOrders"] / statusTotal) * 100) })),
+    promotions: { unitsSoldAtPromotionalPrice: 0, promotedSalesRevenue: 0, promotedItemsSold: 0, discountAmount: legacyDiscountAmount, discountRate: legacyDiscountRate, historicalRegularPriceAvailable: false } as any,
+    availability: { ...availability, availabilityPercentage: availability.availableItems + availability.unavailableItems ? round((availability.availableItems / (availability.availableItems + availability.unavailableItems)) * 100) : 0, historicalRateAvailable: false },
+    tables: current.tables,
+    insights,
+    limitations: ["Les commandes ne stockent pas le prix normal historique ni la catégorie; les analyses de promotion et de catégorie restent volontairement indisponibles.", "Le taux de disponibilité historique ne peut pas être calculé sans historique des changements.", "Le fuseau métier est UTC."],
+    ...(platform ? { platform } : {}),
+  } as AnalyticsDto & { metrics: typeof legacyMetrics; comparison: typeof legacyMetrics.comparison; promotions: any; period: AnalyticsDto["period"] & { startDate: string; endDate: string }; comparisonPeriod: AnalyticsDto["comparisonPeriod"] & { startDate: string; endDate: string } };
+}

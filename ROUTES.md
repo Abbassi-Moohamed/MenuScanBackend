@@ -98,6 +98,7 @@ Content-Type: application/json
 | `PATCH` | `/api/v1/admin/coffees/:coffeeId` | `APP_ADMIN` | Update name / logo / slug |
 | `PATCH` | `/api/v1/admin/coffees/:coffeeId/pin` | `APP_ADMIN` | Reset that coffee's admin PIN to `0000` |
 | `DELETE` | `/api/v1/admin/coffees/:coffeeId` | `APP_ADMIN` | Delete coffee (cascades categories → items) |
+| `GET` | `/api/v1/admin/insights` | `APP_ADMIN` | Platform-wide analytics, optionally filtered by coffee |
 
 ```http
 POST /api/v1/admin/coffees
@@ -132,10 +133,24 @@ All routes below act on the coffee bound to the token. Supplying another coffee'
 | `GET` | `/api/v1/admin/my-coffee/orders` | `COFFEE_ADMIN` | List own orders (`status`, `page`, `limit` filters) |
 | `GET` | `/api/v1/admin/my-coffee/orders/:orderId` | `COFFEE_ADMIN` | Get one own order |
 | `PATCH` | `/api/v1/admin/my-coffee/orders/:orderId/status` | `COFFEE_ADMIN` | Move an own order through its valid workflow |
+| `PATCH` | `/api/v1/admin/my-coffee/orders/:orderId/payment` | `COFFEE_ADMIN` | Mark one confirmed unpaid order as manually paid |
+| `GET` | `/api/v1/admin/my-coffee/insights` | `COFFEE_ADMIN` | Analytics for the own coffee |
+| `GET` | `/api/v1/admin/my-coffee/shifts/current` | `COFFEE_ADMIN` | Current service shift and summary |
+| `POST` | `/api/v1/admin/my-coffee/shifts/open` | `COFFEE_ADMIN` | Open a service shift |
+| `POST` | `/api/v1/admin/my-coffee/shifts/close` | `COFFEE_ADMIN` | Close the current service shift |
+| `GET` | `/api/v1/admin/my-coffee/shifts` | `COFFEE_ADMIN` | List service shifts |
+| `GET` | `/api/v1/admin/my-coffee/shifts/:shiftId` | `COFFEE_ADMIN` | Get a shift and summary |
+| `PATCH` | `/api/v1/admin/my-coffee/shifts/:shiftId/close` | `COFFEE_ADMIN` | Close one shift |
+| `GET` | `/api/v1/admin/my-coffee/table-sessions` | `COFFEE_ADMIN` | List table sessions |
+| `GET` | `/api/v1/admin/my-coffee/table-sessions/:sessionId` | `COFFEE_ADMIN` | Get a table-session summary |
+| `PATCH` | `/api/v1/admin/my-coffee/table-sessions/:sessionId/close` | `COFFEE_ADMIN` | Close an active table session |
 
 Order workflow: `PENDING → CONFIRMED` or `PENDING → REJECTED`. Terminal states
-cannot be changed. Order queries are always scoped to the coffee in the bearer
-token.
+cannot be changed. Payment is a separate workflow:
+`CONFIRMED + UNPAID → CONFIRMED + PAID`. Pending and rejected orders cannot be
+marked paid. Order queries are always scoped to the coffee in the bearer
+token. Add `paymentStatus=PAID` or `paymentStatus=UNPAID` to the order list
+query to filter payment state.
 
 ```http
 POST /api/v1/admin/my-coffee/categories

@@ -6,6 +6,7 @@ import { seedDatabase } from "../src/db/seed.js";
 import { CoffeeModel } from "../src/models/coffee.model.js";
 import { ItemCategoryModel } from "../src/models/item-category.model.js";
 import { ItemModel } from "../src/models/item.model.js";
+import { OrderModel } from "../src/models/order.model.js";
 import { setupTestDatabase, teardownTestDatabase, type TestDatabase } from "./helpers.js";
 
 describe("visitor ordering", () => {
@@ -71,5 +72,51 @@ describe("visitor ordering", () => {
     const invalid = await request(app).patch(`/api/v1/admin/my-coffee/orders/${orderId}/status`)
       .set("Authorization", `Bearer ${token}`).send({ status: "REJECTED" });
     expect(invalid.status).toBe(409);
+  });
+
+  it("allows only a confirmed unpaid order to be marked paid", async () => {
+    const coffee = await CoffeeModel.findOne({ slug: "cafe-el-manzah" }).lean().exec();
+    const categoryIds = await ItemCategoryModel.find({ coffeeId: coffee!._id }).distinct("_id").exec();
+    const item = await ItemModel.findOne({ itemCategoryId: { $in: categoryIds } }).lean().exec();
+    const created = await request(app).post("/api/v1/orders").send({
+      coffeeSlug: "cafe-el-manzah", tableNumber: 8, items: [{ itemId: item!._id.toString(), quantity: 1 }],
+    });
+    const login = await request(app).post("/api/v1/admin/auth/coffee/cafe-el-manzah").send({ pin: "0000" });
+    const token = login.body.data.token as string;
+    const orderId = created.body.data.id as string;
+
+    const pendingPayment = await request(app).patch(`/api/v1/admin/my-coffee/orders/${orderId}/payment`)
+      .set("Authorization", `Bearer ${token}`);
+    expect(pendingPayment.status).toBe(409);
+
+    await request(app).patch(`/api/v1/admin/my-coffee/orders/${orderId}/status`)
+      .set("Authorization", `Bearer ${token}`).send({ status: "CONFIRMED" });
+    const paid = await request(app).patch(`/api/v1/admin/my-coffee/orders/${orderId}/payment`)
+      .set("Authorization", `Bearer ${token}`);
+    expect(paid.status).toBe(200);
+    expect(paid.body.data.paymentStatus).toBe("PAID");
+    expect(paid.body.data.paidAt).toBeTruthy();
+
+    const duplicate = await request(app).patch(`/api/v1/admin/my-coffee/orders/${orderId}/payment`)
+      .set("Authorization", `Bearer ${token}`);
+    expect(duplicate.status).toBe(409);
+    const stored = await OrderModel.findById(orderId).lean().exec();
+    expect(stored?.paymentStatus).toBe("PAID");
+  });
+
+  it("does not allow a visitor or another coffee admin to validate payment", async () => {
+    const coffee = await CoffeeModel.findOne({ slug: "cafe-el-manzah" }).lean().exec();
+    const categoryIds = await ItemCategoryModel.find({ coffeeId: coffee!._id }).distinct("_id").exec();
+    const item = await ItemModel.findOne({ itemCategoryId: { $in: categoryIds } }).lean().exec();
+    const created = await request(app).post("/api/v1/orders").send({
+      coffeeSlug: "cafe-el-manzah", tableNumber: 9, items: [{ itemId: item!._id.toString(), quantity: 1 }],
+    });
+    const orderId = created.body.data.id as string;
+    const visitor = await request(app).patch(`/api/v1/admin/my-coffee/orders/${orderId}/payment`);
+    expect(visitor.status).toBe(401);
+    const otherAdmin = await request(app).post("/api/v1/admin/auth/coffee/coffee-leaf").send({ pin: "0000" });
+    const wrongCoffee = await request(app).patch(`/api/v1/admin/my-coffee/orders/${orderId}/payment`)
+      .set("Authorization", `Bearer ${otherAdmin.body.data.token}`);
+    expect(wrongCoffee.status).toBe(404);
   });
 });

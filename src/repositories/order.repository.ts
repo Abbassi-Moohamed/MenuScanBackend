@@ -1,7 +1,7 @@
 import { Types } from "mongoose";
 import { ItemCategoryModel } from "../models/item-category.model.js";
 import { ItemModel } from "../models/item.model.js";
-import { OrderModel, type OrderStatus } from "../models/order.model.js";
+import { OrderModel, type OrderStatus, type PaymentStatus } from "../models/order.model.js";
 
 export async function findMenuItemsForCoffee(coffeeId: string, itemIds: string[]) {
   if (!Types.ObjectId.isValid(coffeeId)) return [];
@@ -18,13 +18,18 @@ export async function createOrder(input: Record<string, unknown>) {
   return OrderModel.create(input);
 }
 
-export async function listOrders(coffeeId: string, status?: OrderStatus, skip = 0, limit = 50) {
-  const filter = { coffeeId, ...(status ? { status } : {}) };
+export async function listOrders(coffeeId: string, status?: OrderStatus, paymentStatus?: PaymentStatus, skip = 0, limit = 50) {
+  const filter = { coffeeId, ...(status ? { status } : {}), ...(paymentStatus ? { paymentStatus } : {}) };
   const [orders, total] = await Promise.all([
     OrderModel.find(filter).sort({ createdAt: -1 }).skip(skip).limit(limit).lean().exec(),
     OrderModel.countDocuments(filter).exec(),
   ]);
   return { orders, total };
+}
+
+export async function findOrderWithSession(orderId: string) {
+  if (!Types.ObjectId.isValid(orderId)) return null;
+  return OrderModel.findById(orderId).select("+tableSessionId +serviceShiftId").lean().exec();
 }
 
 export async function findOrderOwnedByCoffee(coffeeId: string, orderId: string) {
@@ -41,6 +46,14 @@ export async function updateOrderStatus(coffeeId: string, orderId: string, statu
   return OrderModel.findOneAndUpdate(
     { _id: orderId, coffeeId },
     { $set: { status }, $push: { statusHistory: { status, changedAt } } },
+    { returnDocument: "after", runValidators: true },
+  ).lean().exec();
+}
+
+export async function markOrderPaid(coffeeId: string, orderId: string, paidAt: Date, paidBy: string) {
+  return OrderModel.findOneAndUpdate(
+    { _id: orderId, coffeeId, status: "CONFIRMED", paymentStatus: "UNPAID" },
+    { $set: { paymentStatus: "PAID", paidAt, paidBy } },
     { returnDocument: "after", runValidators: true },
   ).lean().exec();
 }

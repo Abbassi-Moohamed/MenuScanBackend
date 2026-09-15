@@ -6,6 +6,9 @@ import { connectDatabase, disconnectDatabase } from "./index.js";
 import { CoffeeModel } from "../models/coffee.model.js";
 import { ItemCategoryModel } from "../models/item-category.model.js";
 import { ItemModel } from "../models/item.model.js";
+import { OrderModel } from "../models/order.model.js";
+import { ServiceShiftModel } from "../models/service-shift.model.js";
+import { TableSessionModel } from "../models/table-session.model.js";
 import { hashPin } from "../auth/pin.js";
 import { menuSeed } from "./seed-data.js";
 import { logger } from "../utils/logger.js";
@@ -14,13 +17,17 @@ import { logger } from "../utils/logger.js";
 const DEFAULT_ADMIN_PIN = "0000";
 
 /**
- * Destructive developer seed: wipes coffees, categories and items, then
+ * Destructive developer seed: wipes orders, sessions, shifts, coffees,
+ * categories and items, then
  * recreates the realistic multi-coffee dataset from seed-data.ts.
  *
  * Wipe order respects the document references (items → categories → coffees).
  * Runs on the already-connected database.
  */
 export async function seedDatabase(): Promise<{ coffees: number; categories: number; items: number }> {
+  await OrderModel.deleteMany({});
+  await TableSessionModel.deleteMany({});
+  await ServiceShiftModel.deleteMany({});
   await ItemModel.deleteMany({});
   await ItemCategoryModel.deleteMany({});
   await CoffeeModel.deleteMany({});

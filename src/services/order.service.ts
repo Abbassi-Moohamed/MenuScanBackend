@@ -1,8 +1,18 @@
 import { CoffeeModel } from "../models/coffee.model.js";
-import { type OrderStatus } from "../models/order.model.js";
-import { createOrder, findMenuItemsForCoffee, findOrder, findOrderOwnedByCoffee, listOrders, updateOrderStatus } from "../repositories/order.repository.js";
+import { type OrderStatus, type PaymentStatus } from "../models/order.model.js";
+import { createOrder, findMenuItemsForCoffee, findOrder, findOrderOwnedByCoffee, listOrders, markOrderPaid, updateOrderStatus } from "../repositories/order.repository.js";
+import { findCurrentServiceShift } from "../repositories/service-shift.repository.js";
+import {
+  createTableSession,
+  findActiveTableSession,
+  findTableSessionByToken,
+  generateSessionToken,
+  hashSessionToken,
+  touchTableSession,
+} from "../repositories/table-session.repository.js";
 import type { OrderDto } from "../types/order.js";
 import { ApiError } from "../utils/ApiError.js";
+import { Types } from "mongoose";
 
 const transitions: Record<OrderStatus, readonly OrderStatus[]> = {
   PENDING: ["CONFIRMED", "REJECTED"],
@@ -10,17 +20,55 @@ const transitions: Record<OrderStatus, readonly OrderStatus[]> = {
   REJECTED: [],
 };
 
-function dto(order: any): OrderDto {
+function dto(order: any, sessionToken?: string): OrderDto {
   return {
     id: order._id.toString(), coffeeId: order.coffeeId.toString(), tableNumber: order.tableNumber,
-    items: order.items.map((item: any) => ({ ...item, itemId: item.itemId.toString() })),
-    total: order.total, status: order.status, createdAt: order.createdAt, updatedAt: order.updatedAt,
+    items: order.items.map((item: any) => ({ ...item, itemId: item.itemId.toString(), image: item.image ?? null })),
+    total: order.total, status: order.status, paymentStatus: order.paymentStatus ?? "UNPAID",
+    paidAt: order.paidAt ?? null, paidBy: order.paidBy ?? null,
+    tableSessionId: order.tableSessionId?.toString() ?? null,
+    serviceShiftId: order.serviceShiftId?.toString() ?? null,
+    ...(sessionToken ? { sessionToken } : {}),
+    createdAt: order.createdAt, updatedAt: order.updatedAt,
   };
+}
+
+async function resolveTableSession(coffeeId: Types.ObjectId, tableNumber: number, suppliedToken?: string) {
+  const activeShift = await findCurrentServiceShift(coffeeId.toString());
+  let session = suppliedToken ? await findTableSessionByToken(suppliedToken) : null;
+  if (suppliedToken) {
+    if (!session || session.status !== "ACTIVE" || session.coffeeId.toString() !== coffeeId.toString() || session.tableNumber !== tableNumber) {
+      throw new ApiError(401, "Invalid or expired session token.");
+    }
+    return { session, sessionToken: suppliedToken, serviceShiftId: activeShift?._id ?? session.serviceShiftId ?? null };
+  }
+
+  session = await findActiveTableSession(coffeeId.toString(), tableNumber);
+  if (!session) {
+    const sessionToken = generateSessionToken();
+    try {
+      session = await createTableSession({
+        coffeeId,
+        tableNumber,
+        serviceShiftId: activeShift?._id ?? null,
+        sessionTokenHash: hashSessionToken(sessionToken),
+      });
+      return { session, sessionToken, serviceShiftId: activeShift?._id ?? null };
+    } catch (error) {
+      // The partial unique index is the synchronization primitive. A
+      // concurrent first order wins; the loser adopts that active session.
+      if (typeof error !== "object" || error === null || (error as { code?: number }).code !== 11000) throw error;
+      session = await findActiveTableSession(coffeeId.toString(), tableNumber);
+      if (!session) throw error;
+    }
+  }
+  return { session, serviceShiftId: session.serviceShiftId ?? null };
 }
 
 export async function placeOrder(input: {
   coffeeSlug: string; tableNumber: number;
   items: { itemId: string; quantity: number }[];
+  sessionToken?: string;
 }): Promise<OrderDto> {
   const coffee = await CoffeeModel.findOne({ slug: input.coffeeSlug }).select({ _id: 1 }).lean().exec();
   if (!coffee) throw new ApiError(404, "Coffee not found");
@@ -37,23 +85,37 @@ export async function placeOrder(input: {
     const unitPrice = item.promotion ?? item.price;
     const lineTotal = Math.round(unitPrice * quantity * 100) / 100;
     subtotal += lineTotal;
-    return { itemId: item._id, name: item.name, quantity, unitPrice, subtotal: lineTotal };
+    return { itemId: item._id, name: item.name, image: item.image ?? null, quantity, unitPrice, subtotal: lineTotal };
   });
   subtotal = Math.round(subtotal * 100) / 100;
+  const session = await resolveTableSession(coffee._id, input.tableNumber, input.sessionToken);
   const order = await createOrder({
-    coffeeId: coffee._id, tableNumber: input.tableNumber, items: snapshots, total: subtotal, status: "PENDING",
+    coffeeId: coffee._id,
+    tableNumber: input.tableNumber,
+    items: snapshots,
+    total: subtotal,
+    status: "PENDING",
+    tableSessionId: session.session._id,
+    serviceShiftId: session.serviceShiftId,
   });
-  return dto(order.toObject());
+  await touchTableSession(session.session._id);
+  return dto(order.toObject(), session.sessionToken);
 }
 
-export async function getCoffeeOrders(coffeeId: string, status?: OrderStatus, page = 1, limit = 50) {
-  const result = await listOrders(coffeeId, status, (page - 1) * limit, limit);
-  return { orders: result.orders.map(dto), total: result.total, page, limit };
+export async function getCoffeeOrders(coffeeId: string, status?: OrderStatus, paymentStatus?: PaymentStatus, page = 1, limit = 50) {
+  const result = await listOrders(coffeeId, status, paymentStatus, (page - 1) * limit, limit);
+  return { orders: result.orders.map((order) => dto(order)), total: result.total, page, limit };
 }
 
-export async function getPublicOrder(orderId: string) {
+export async function getPublicOrder(orderId: string, sessionToken?: string) {
   const order = await findOrder(orderId);
   if (!order) throw new ApiError(404, "Order not found");
+  if (order.tableSessionId && sessionToken) {
+    const session = await findTableSessionByToken(sessionToken);
+    if (!session || !order.tableSessionId || session._id.toString() !== order.tableSessionId.toString()) {
+      throw new ApiError(401, "Invalid session token.");
+    }
+  }
   return dto(order);
 }
 
@@ -71,5 +133,15 @@ export async function changeOrderStatus(coffeeId: string, orderId: string, nextS
   }
   const updated = await updateOrderStatus(coffeeId, orderId, nextStatus, new Date());
   if (!updated) throw new ApiError(404, "Order not found");
+  return dto(updated);
+}
+
+export async function validateOrderPayment(coffeeId: string, orderId: string, paidBy: string) {
+  const current = await findOrderOwnedByCoffee(coffeeId, orderId);
+  if (!current) throw new ApiError(404, "Order not found");
+  if (current.status !== "CONFIRMED") throw new ApiError(409, "Only confirmed orders can be marked as paid.");
+  if (current.paymentStatus === "PAID") throw new ApiError(409, "Order payment is already validated.");
+  const updated = await markOrderPaid(coffeeId, orderId, new Date(), paidBy);
+  if (!updated) throw new ApiError(409, "Order payment was already validated or is no longer eligible.");
   return dto(updated);
 }
