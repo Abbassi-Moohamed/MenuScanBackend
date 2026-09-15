@@ -119,6 +119,31 @@ describe("table sessions and service shifts", () => {
     expect(session?.serviceShiftId?.toString()).toBe(shift._id.toString());
   });
 
+  it("does not close a service while an unassigned active table remains open", async () => {
+    const order = await request(app).post("/api/v1/orders").send({
+      coffeeSlug: "cafe-el-manzah", tableNumber: 14, items: [{ itemId, quantity: 1 }],
+    });
+    expect(order.status).toBe(201);
+
+    const coffee = await CoffeeModel.findOne({ slug: "cafe-el-manzah" }).lean().exec();
+    const shift = await ServiceShiftModel.create({
+      coffeeId: coffee!._id,
+      status: "OPEN",
+      type: "MORNING",
+      name: "Morning",
+      openedByRole: "COFFEE_ADMIN",
+    });
+
+    const closed = await request(app)
+      .post(`/api/v1/admin/my-coffee/service-shifts/${shift._id}/close`)
+      .set("Authorization", `Bearer ${token}`);
+    expect(closed.status).toBe(409);
+    expect(closed.body.details.code).toBe("OPEN_TABLES_REMAIN");
+    expect(closed.body.details.tables).toEqual(
+      expect.arrayContaining([expect.objectContaining({ tableNumber: 14 })]),
+    );
+  });
+
   it("treats repeated table closure as idempotent", async () => {
     const order = await request(app).post("/api/v1/orders").send({
       coffeeSlug: "cafe-el-manzah", tableNumber: 11, items: [{ itemId, quantity: 1 }],

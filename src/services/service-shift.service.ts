@@ -110,7 +110,6 @@ export async function finishServiceShift(coffeeId: string, shiftId: string): Pro
   }
 
   const openTables = await listTableSessions(coffeeId, {
-    serviceShiftId: shiftId,
     status: "ACTIVE",
     limit: 1000,
   });
