@@ -103,7 +103,7 @@ export async function getServiceShiftSummary(coffeeId: string, shiftId: string) 
         ],
         paid: [
           { $match: { status: "CONFIRMED", paymentStatus: "PAID" } },
-          { $group: { _id: null, revenue: { $sum: "$total" } } },
+          { $group: { _id: null, orders: { $sum: 1 }, revenue: { $sum: "$total" } } },
         ],
         outstanding: [
           { $match: { status: "CONFIRMED", paymentStatus: { $ne: "PAID" } } },
@@ -143,6 +143,7 @@ export async function getServiceShiftSummary(coffeeId: string, shiftId: string) 
     pendingRevenue: Number(pending.revenue ?? 0),
     rejectedOrders: counts.get("REJECTED") ?? 0,
     confirmedRevenue: Number(confirmed.revenue ?? 0),
+    paidOrders: Number(paid.orders ?? 0),
     paidRevenue: Number(paid.revenue ?? 0),
     outstandingRevenue: Number(outstanding.revenue ?? 0),
     unpaidConfirmedOrders: Number(outstanding.orders ?? 0),
