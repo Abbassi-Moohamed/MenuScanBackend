@@ -66,6 +66,7 @@ export interface AdminCategoryDto {
   id: string;
   name: string;
   image: string | null;
+  itemCount: number;
   createdAt: Date;
   updatedAt: Date;
 }

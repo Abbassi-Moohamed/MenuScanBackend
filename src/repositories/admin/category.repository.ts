@@ -15,6 +15,7 @@ export interface AdminCategoryRow {
   imageId: string | null;
   createdAt: Date;
   updatedAt: Date;
+  itemCount: number;
 }
 
 const SAFE_FIELDS = { name: 1, image: 1, imageId: 1, createdAt: 1, updatedAt: 1 } as const;
@@ -34,17 +35,19 @@ function toRow(category: {
     imageId: category.imageId ?? null,
     createdAt: category.createdAt,
     updatedAt: category.updatedAt,
+    itemCount: 0,
   };
 }
 
 export async function listCategoriesOfCoffee(coffeeId: string): Promise<AdminCategoryRow[]> {
   if (!Types.ObjectId.isValid(coffeeId)) return [];
-  const categories = await ItemCategoryModel.find({ coffeeId })
-    .sort({ name: 1 })
-    .select(SAFE_FIELDS)
-    .lean()
-    .exec();
-  return categories.map(toRow);
+  const categories = await ItemCategoryModel.find({ coffeeId }).sort({ name: 1 }).select(SAFE_FIELDS).lean().exec();
+  const counts = await ItemModel.aggregate([
+    { $match: { itemCategoryId: { $in: categories.map((category) => category._id) } } },
+    { $group: { _id: "$itemCategoryId", count: { $sum: 1 } } },
+  ]).exec();
+  const countByCategory = new Map(counts.map((row) => [row._id.toString(), Number(row.count)]));
+  return categories.map((category) => ({ ...toRow(category), itemCount: countByCategory.get(category._id.toString()) ?? 0 }));
 }
 
 export async function listCategoryImageIdsOfCoffee(coffeeId: string): Promise<string[]> {
@@ -70,6 +73,7 @@ export async function createCategoryForCoffee(
     imageId: category.imageId ?? null,
     createdAt: category.createdAt,
     updatedAt: category.updatedAt,
+    itemCount: 0,
   };
 }
 

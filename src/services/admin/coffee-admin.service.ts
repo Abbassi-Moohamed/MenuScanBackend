@@ -82,6 +82,7 @@ function categoryToDto(category: {
   image: string | null;
   createdAt: Date;
   updatedAt: Date;
+  itemCount: number;
 }): AdminCategoryDto {
   return {
     id: category._id.toString(),
@@ -89,6 +90,7 @@ function categoryToDto(category: {
     image: category.image,
     createdAt: category.createdAt,
     updatedAt: category.updatedAt,
+    itemCount: category.itemCount,
   };
 }
 
