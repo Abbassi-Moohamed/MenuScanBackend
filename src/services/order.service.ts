@@ -4,6 +4,7 @@ import { createOrder, findMenuItemsForCoffee, findOrder, findOrderOwnedByCoffee,
 import { findCurrentServiceShift } from "../repositories/service-shift.repository.js";
 import {
   createTableSession,
+  assignTableSessionToServiceShift,
   findActiveTableSession,
   findTableSessionByToken,
   generateSessionToken,
@@ -40,7 +41,7 @@ async function resolveTableSession(coffeeId: Types.ObjectId, tableNumber: number
     if (!session || session.status !== "ACTIVE" || session.coffeeId.toString() !== coffeeId.toString() || session.tableNumber !== tableNumber) {
       throw new ApiError(401, "Invalid or expired session token.");
     }
-    return { session, sessionToken: suppliedToken, serviceShiftId: activeShift?._id ?? session.serviceShiftId ?? null };
+    return { session, sessionToken: suppliedToken, serviceShiftId: activeShift?._id ?? null };
   }
 
   session = await findActiveTableSession(coffeeId.toString(), tableNumber);
@@ -62,7 +63,7 @@ async function resolveTableSession(coffeeId: Types.ObjectId, tableNumber: number
       if (!session) throw error;
     }
   }
-  return { session, serviceShiftId: session.serviceShiftId ?? null };
+  return { session, serviceShiftId: activeShift?._id ?? null };
 }
 
 export async function placeOrder(input: {
@@ -89,6 +90,13 @@ export async function placeOrder(input: {
   });
   subtotal = Math.round(subtotal * 100) / 100;
   const session = await resolveTableSession(coffee._id, input.tableNumber, input.sessionToken);
+  if (session.serviceShiftId) {
+    await assignTableSessionToServiceShift(
+      coffee._id.toString(),
+      session.session._id,
+      session.serviceShiftId,
+    );
+  }
   const order = await createOrder({
     coffeeId: coffee._id,
     tableNumber: input.tableNumber,
@@ -147,6 +155,13 @@ export async function changeOrderStatus(coffeeId: string, orderId: string, nextS
     activeService?._id,
   );
   if (!updated) throw new ApiError(404, "Order not found");
+  if (nextStatus === "CONFIRMED" && activeService && current.tableSessionId) {
+    await assignTableSessionToServiceShift(
+      coffeeId,
+      current.tableSessionId,
+      activeService._id,
+    );
+  }
   return dto(updated);
 }
 

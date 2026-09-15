@@ -93,6 +93,32 @@ describe("table sessions and service shifts", () => {
     expect(closed.body.data.status).toBe("CLOSED");
   });
 
+  it("attaches a pre-service table session to the service when its order is confirmed", async () => {
+    const order = await request(app).post("/api/v1/orders").send({
+      coffeeSlug: "cafe-el-manzah", tableNumber: 13, items: [{ itemId, quantity: 1 }],
+    });
+    expect(order.status).toBe(201);
+    const sessionId = order.body.data.tableSessionId as string;
+
+    const coffee = await CoffeeModel.findOne({ slug: "cafe-el-manzah" }).lean().exec();
+    const shift = await ServiceShiftModel.create({
+      coffeeId: coffee!._id,
+      status: "OPEN",
+      type: "MORNING",
+      name: "Morning",
+      openedByRole: "COFFEE_ADMIN",
+    });
+
+    const confirmed = await request(app)
+      .patch(`/api/v1/admin/my-coffee/orders/${order.body.data.id}/status`)
+      .set("Authorization", `Bearer ${token}`)
+      .send({ status: "CONFIRMED" });
+    expect(confirmed.status).toBe(200);
+
+    const session = await TableSessionModel.findById(sessionId).lean().exec();
+    expect(session?.serviceShiftId?.toString()).toBe(shift._id.toString());
+  });
+
   it("treats repeated table closure as idempotent", async () => {
     const order = await request(app).post("/api/v1/orders").send({
       coffeeSlug: "cafe-el-manzah", tableNumber: 11, items: [{ itemId, quantity: 1 }],

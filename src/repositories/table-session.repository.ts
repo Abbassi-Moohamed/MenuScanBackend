@@ -40,6 +40,21 @@ export async function touchTableSession(sessionId: Types.ObjectId, at = new Date
   ).exec();
 }
 
+export async function assignTableSessionToServiceShift(
+  coffeeId: string,
+  sessionId: Types.ObjectId,
+  serviceShiftId: Types.ObjectId,
+): Promise<void> {
+  await TableSessionModel.updateOne(
+    {
+      _id: sessionId,
+      coffeeId: new Types.ObjectId(coffeeId),
+      status: "ACTIVE",
+    },
+    { $set: { serviceShiftId } },
+  ).exec();
+}
+
 export async function closeTableSession(coffeeId: string, sessionId: string, closedAt = new Date()) {
   if (!Types.ObjectId.isValid(coffeeId) || !Types.ObjectId.isValid(sessionId)) return null;
   return TableSessionModel.findOneAndUpdate(
